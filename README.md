@@ -14,7 +14,7 @@ Use deepL API to translate CSV table that outputed from Unity Localization.
 
 你好！我是**老白**，一名游戏开发者。这是我第一次公开发布个人项目，主要目的是为了方便自己和同样有需求的朋友。
 
-项目中可能存在一些未被发现的 Bug 或疏漏之处，非常欢迎你通过 [Issues](https://github.com/siyan12/CSVtranslater/issues) 提出反馈和建议，帮助我把这个小工具做得更好！
+项目中可能存在一些未被发现的 Bug 或疏漏之处，非常欢迎你通过 [Issues](https://github.com/siyan12/UnityLocalizationCSVDeepLTranslater/issues) 提出反馈和建议，帮助我把这个小工具做得更好！
 
 ### 👨‍💻 关于我
 
@@ -38,7 +38,7 @@ Use deepL API to translate CSV table that outputed from Unity Localization.
 ## 🚀 快速开始 (普通用户)
 
 1.  **下载与解压**
-    -   前往本项目的 [Releases 页面](https://github.com/siyan12/CSVtranslater/releases)。
+    -   前往本项目的 [Releases 页面](https://github.com/siyan12/UnityLocalizationCSVDeepLTranslater/releases)。
     -   下载最新的 `CSVTranslator-vX.X.X.zip` 压缩包并解压。
 
 2.  **准备文件**
@@ -88,7 +88,7 @@ Use deepL API to translate CSV table that outputed from Unity Localization.
 
 Hi there! I'm **Lao Bai**, a game developer. This is the first personal project I've ever released publicly. My main goal was to create a handy tool for myself and other developers with similar needs.
 
-There might be some undiscovered bugs or oversights. I would be very grateful if you could provide feedback and suggestions via the [Issues](https://github.com/siyan12/CSVtranslater/issues) page to help me improve it!
+There might be some undiscovered bugs or oversights. I would be very grateful if you could provide feedback and suggestions via the [Issues](https://github.com/siyan12/UnityLocalizationCSVDeepLTranslater/issues) page to help me improve it!
 
 ### 👨‍💻 About Me
 
@@ -112,7 +112,7 @@ There might be some undiscovered bugs or oversights. I would be very grateful if
 ## 🚀 Quick Start (For Users)
 
 1.  **Download and Unzip**
-    -   Go to the [Releases page](https://github.com/siyan12/CSVtranslater/releases) of this project.
+    -   Go to the [Releases page](https://github.com/siyan12/UnityLocalizationCSVDeepLTranslater/releases) of this project.
     -   Download and unzip the latest `CSVTranslator-vX.X.X.zip` archive.
 
 2.  **Prepare Files**
