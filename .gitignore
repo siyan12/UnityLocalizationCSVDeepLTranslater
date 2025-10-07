@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# PyInstaller
+*.spec
+build/
+dist/
+
+# IDE / Editor specific
+.idea/
+.vscode/
+.codebuddy/
+
+# Local files
+/CSVtranslator-run/input/*
+!/CSVtranslator-run/input/.gitkeep
+/CSVtranslator-run/output/*
+!/CSVtranslator-run/output/.gitkeep
+/CSVtranslator-run/config.ini
