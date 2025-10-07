@@ -16,10 +16,6 @@ Use deepL API to translate CSV table that outputed from Unity Localization.
 
 项目中可能存在一些未被发现的 Bug 或疏漏之处，非常欢迎你通过 [Issues](https://github.com/siyan12/UnityLocalizationCSVDeepLTranslater/issues) 提出反馈和建议，帮助我把这个小工具做得更好！
 
-### 👨‍💻 关于我
-
--   **作者**: 老白
--   **身份**: 独立游戏开发者
 -   **工作室**: LauNewBee
 -   **我的作品**: [欢迎访问我的 Steam 开发者页面](https://store.steampowered.com/developer/LauNewBee)
 
@@ -90,10 +86,6 @@ Hi there! I'm **Lao Bai**, a game developer. This is the first personal project 
 
 There might be some undiscovered bugs or oversights. I would be very grateful if you could provide feedback and suggestions via the [Issues](https://github.com/siyan12/UnityLocalizationCSVDeepLTranslater/issues) page to help me improve it!
 
-### 👨‍💻 About Me
-
--   **Author**: Bai
--   **Role**: Indie Game Developer
 -   **Studio**: LauNewBee
 -   **My Work**: [Check out my Steam Developer Page](https://store.steampowered.com/developer/LauNewBee)
 
