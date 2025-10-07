@@ -92,7 +92,7 @@ There might be some undiscovered bugs or oversights. I would be very grateful if
 
 ### 👨‍💻 About Me
 
--   **Author**: Lao Bai
+-   **Author**: Bai
 -   **Role**: Indie Game Developer
 -   **Studio**: LauNewBee
 -   **My Work**: [Check out my Steam Developer Page](https://store.steampowered.com/developer/LauNewBee)
