@@ -2,7 +2,7 @@
 
 [English Version](#-english-version)
 
-这是一个使用 Python 和 DeepL API 开发的桌面小工具，**专为翻译 Unity Localization 插件导出的 CSV 表格而设计**。它可以快速、批量地将指定列从源语言翻译成多种目标语言，极大简化多语言本地化流程。
+这是一个使用 Python 和 DeepL API 开发的桌面小工具，**专为翻译 Unity Localization 插件导出的 CSV 表格而设计**。当前版本固定以 `English(en)` 为源语言，并批量填充 CSV 中自动检测到的受支持目标语言列。
 
 Use deepL API to translate CSV table that outputed from Unity Localization.
 
@@ -23,12 +23,13 @@ Use deepL API to translate CSV table that outputed from Unity Localization.
 
 ## ✨ 功能特性
 
--   **专为 Unity 设计**：支持 Unity Localization 1.4 文档中的标准 CSV 与 CSV (With Comments) 表格结构。
+-   **已测试的 Unity 兼容性**：CSV 层面的自动测试覆盖 Unity Localization 1.4 文档中的标准 CSV 与 CSV (With Comments) 结构；限制见下文“Unity 兼容范围”。
 -   **图形化界面**：简洁直观的图形界面，无需命令行操作。
--   **批量翻译**：一次性将 CSV 文件中的文本翻译成多种指定语言；DeepL 请求按保守的最多 50 条文本和安全请求体预算分批发送。
+-   **批量翻译**：固定从 `English(en)` 源列翻译，自动填充 CSV 中检测到的受支持目标列；当前没有源语言或目标语言选择器。DeepL 请求按保守的最多 50 条文本和安全请求体预算分批发送。
 -   **任务内缓存**：同一次任务会跨文件复用相同源文本与目标语言的译文；缓存仅保存在内存中，任务结束即清除，不会把本地化内容持久化到磁盘。
 -   **安全配置**：DeepL API Key 保存到操作系统凭据库，不写入项目或 `config.ini`。
--   **平台支持**：提供 Windows `exe`；Python 3.10+ 源码可在支持 Tkinter 的平台运行。
+-   **源码平台**：Python 3.10+ 源码面向 Windows、macOS 和 Linux，需要 Tkinter 与可用的系统凭据库后端。自动测试在 Windows 和 Linux 上运行；macOS 尚未纳入 CI 验证。
+-   **预编译包平台**：Releases 目前仅提供 Windows `CSVTranslator.exe`，macOS 和 Linux 用户请从源码运行。
 
 ---
 
@@ -63,12 +64,52 @@ Use deepL API to translate CSV table that outputed from Unity Localization.
 
 ---
 
+## 🛠️ 从源码运行与构建
+
+需要 Python 3.10 或更高版本。Linux 用户如果 Python 未包含 Tkinter，请先通过系统包管理器安装（例如 Debian/Ubuntu 的 `python3-tk`）。
+
+```powershell
+# Windows PowerShell
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements-dev.txt
+python gui_app.py
+```
+
+```bash
+# macOS / Linux
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements-dev.txt
+python gui_app.py
+```
+
+运行离线测试和语法检查：
+
+```bash
+python -m pytest
+python -m py_compile translator_core.py gui_app.py app_storage.py
+```
+
+使用 PyInstaller 构建当前平台的可执行文件：
+
+```bash
+python -m pip install pyinstaller
+python -m PyInstaller --noconsole --onefile --name CSVTranslator gui_app.py
+```
+
+构建结果位于 `dist` 目录。PyInstaller 不是交叉编译器；用于发布的 Windows 可执行文件应在 Windows 上构建并测试。
+
+---
+
 ## ⚠️ 注意事项
 
 -   **API Key**：Key 通过 Python `keyring` 保存到系统凭据库。请勿在日志、Issue、CSV 或配置文件中粘贴 Key。若怀疑泄露，请立即在 DeepL 账户中停用/删除该 Key 并创建新 Key；还可在系统的“凭据管理器/钥匙串”中删除服务名 `UnityLocalizationCSVDeepLTranslater` 的条目。
 -   **旧版迁移**：新版本不会读取旧的 `CSVtranslator-run/config.ini`。请在新界面重新保存 Key，确认可用后安全删除旧文件；若旧文件曾被分享，必须轮换 Key。
 -   **凭据库不可用**：程序会明确报错且不会退回明文保存。请确认已安装 `keyring`，并确保系统凭据服务可用。
--   **隐私**：待翻译的 CSV 文本会发送给 DeepL；程序不会额外上传这些文本，UI 日志也不会显示源文或译文内容。
+-   **隐私**：待翻译的 CSV 文本会通过 DeepL SDK 发送给 DeepL，这是完成翻译所必需的唯一文本上传。工具本身不添加遥测或其他上传渠道，UI 日志也不会显示源文或译文内容。
 -   **费用**：DeepL API 的免费额度有限，请注意使用量，避免产生不必要的费用。
 -   **批量请求**：待翻译文本按保守的最多 50 条一批提交，并同时遵守安全请求体预算，避免大请求接近服务限制。
 -   **任务内缓存**：相同的源文本/目标语言组合会在同一次任务的不同文件间复用，减少重复请求。缓存只存在于内存，任务结束即丢弃；为避免本地化内容泄露，当前不实现持久缓存。
@@ -79,7 +120,7 @@ Use deepL API to translate CSV table that outputed from Unity Localization.
 -   **安全输出**：每个 CSV 先写入输出目录中的专用临时文件，完成刷新并关闭后才原子替换最终文件。读取、翻译或写入失败不会覆盖上一次成功输出，正常中断也会清理临时文件。
 -   **结果状态**：`success` 表示文件全部成功；`partial` 表示至少一个单元格成功、同时有失败单元格，失败格保留原值；`failed` 表示文件没有可提交的成功译文或发生文件级错误，因此不提交新输出。批次混合这些结果时，界面会明确显示部分完成。
 -   **失败清单**：日志会列出失败单元格的文件名、CSV 行号、目标列、目标语言和安全错误信息，不包含源文、译文或 API Key，便于定位并重试。
--   **Unity 兼容范围**：自动测试以 Unity Localization 1.4 文档给出的 `Key,Id,Locale...` 与 CSV (With Comments) 结构为基准，并支持仅含 `Key` 或 `Id` 的合法变体。自定义列会保留；但自定义 Locale Field Name 无法自动识别为语言列，其他包版本也尚未做 Unity Editor 端到端验证。
+-   **Unity 兼容范围**：已测试兼容 Unity Localization 1.4 文档给出的 `Key,Id,Locale...` 与 CSV (With Comments) CSV 结构，并支持仅含 `Key` 或 `Id` 的合法变体。这是自动 CSV 级测试，不代表所有 Unity Editor/包版本都已端到端验证。已知限制：源列固定为 `English(en)`；自定义 Locale Field Name 无法自动识别为语言列；其他 Unity Localization 版本尚未在 Unity Editor 中做端到端验证。自定义非语言列会原样保留。
 -   **结构保护**：工具会保留 .NET/Python/printf 占位符、Unity Smart String、ICU、富文本标签与换行；如果译文结构不同，该单元格会保留原值并报告失败。当前嵌套 Smart String/ICU 会整段保护，因此表达式内部的分支文案不会翻译。
 -   **重试与错误分类**：网络暂时故障、DeepL 服务器错误和限流由官方 DeepL SDK 按指数退避自动重试，应用不会叠加第二层重试或在最终失败后继续休眠。认证、请求参数和额度错误不会重试，并会停止批次；界面显示不含源文或密钥的可操作提示。
 
@@ -103,7 +144,7 @@ Use deepL API to translate CSV table that outputed from Unity Localization.
 
 # 🇬🇧 English Version
 
-This is a desktop tool developed with Python and the DeepL API, **specifically designed for translating CSV files exported from the Unity Localization package**. It can quickly batch-translate specific columns from a source language to multiple target languages, greatly simplifying the localization workflow.
+This is a desktop tool developed with Python and the DeepL API, **specifically designed for translating CSV files exported from the Unity Localization package**. The current version always uses `English(en)` as its source and batch-fills the supported target-language columns detected in each CSV.
 
 Use deepL API to translate CSV table that outputed from Unity Localization.
 
@@ -124,12 +165,13 @@ There might be some undiscovered bugs or oversights. I would be very grateful if
 
 ## ✨ Features
 
--   **Designed for Unity**: Supports the standard CSV and CSV (With Comments) table layouts documented for Unity Localization 1.4.
+-   **Tested Unity Compatibility**: CSV-level automated tests cover the standard CSV and CSV (With Comments) layouts documented for Unity Localization 1.4; see **Unity compatibility scope** below for limitations.
 -   **GUI**: Simple and intuitive graphical user interface, no command line needed.
--   **Batch Translation**: Translate text in a CSV file into multiple target languages at once; DeepL requests are split conservatively by both a maximum of 50 texts and a safe request-body budget.
+-   **Batch Translation**: Always translate from the `English(en)` source column and automatically fill supported target columns detected in the CSV; there is currently no source- or target-language selector. DeepL requests are split conservatively by both a maximum of 50 texts and a safe request-body budget.
 -   **Task-local Cache**: Reuse translations for the same source-text/target-language pair across files in one task. The cache is memory-only, cleared when the task ends, and never persists localization content to disk.
 -   **Secure Configuration**: The DeepL API Key is stored in the operating system credential store, never in the project or `config.ini`.
--   **Platform Support**: A Windows `exe` is provided; the Python 3.10+ source runs on platforms with Tkinter support.
+-   **Source Platforms**: The Python 3.10+ source targets Windows, macOS, and Linux with Tkinter and a working system credential-store backend. Automated tests run on Windows and Linux; macOS is not currently covered by CI.
+-   **Prebuilt Package Platforms**: Releases currently provide only the Windows `CSVTranslator.exe`; macOS and Linux users should run from source.
 
 ---
 
@@ -164,12 +206,55 @@ and `output` CSV folders; the API Key is not stored there.
 
 ---
 
+## 🛠️ Run from Source and Build
+
+Python 3.10 or newer is required. If a Linux Python installation does not include
+Tkinter, install it first with the system package manager (for example,
+`python3-tk` on Debian/Ubuntu).
+
+```powershell
+# Windows PowerShell
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements-dev.txt
+python gui_app.py
+```
+
+```bash
+# macOS / Linux
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements-dev.txt
+python gui_app.py
+```
+
+Run the offline tests and syntax checks:
+
+```bash
+python -m pytest
+python -m py_compile translator_core.py gui_app.py app_storage.py
+```
+
+Build an executable for the current platform with PyInstaller:
+
+```bash
+python -m pip install pyinstaller
+python -m PyInstaller --noconsole --onefile --name CSVTranslator gui_app.py
+```
+
+The result is written to `dist`. PyInstaller is not a cross-compiler; build and test
+a release Windows executable on Windows.
+
+---
+
 ## ⚠️ Important Notes
 
 -   **API Key**: The Key is stored through Python `keyring` in the system credential store. Never paste it into logs, issues, CSV files, or configuration files. If exposure is suspected, disable/delete it in your DeepL account immediately and create a replacement. You may also remove the entry named `UnityLocalizationCSVDeepLTranslater` from the OS Credential Manager/Keychain.
 -   **Legacy migration**: New versions do not read the old `CSVtranslator-run/config.ini`. Save the Key again in the new UI, verify it, and then securely delete the old file. Rotate the Key if that file was ever shared.
 -   **Unavailable credential store**: The application reports an error and never falls back to plaintext. Ensure `keyring` is installed and the OS credential service is available.
--   **Privacy**: CSV text selected for translation is sent to DeepL. The application does not upload it elsewhere, and the UI log does not display source or translated text.
+-   **Privacy**: CSV text selected for translation is sent to DeepL through the DeepL SDK; this is the only text upload required to perform translation. The tool adds no telemetry or other upload channel, and the UI log does not display source or translated text.
 -   **Costs**: The DeepL API has a limited free tier. Be mindful of your usage to avoid unexpected charges.
 -   **Batched requests**: Texts are submitted conservatively in batches of at most 50 while also respecting a safe request-body budget, so large requests do not approach provider limits.
 -   **Task-local cache**: The same source-text/target-language pair is reused across files within one task, reducing duplicate requests. The cache exists only in memory and is discarded when the task ends; persistent caching is currently not implemented to avoid leaking localization content.
@@ -180,7 +265,7 @@ and `output` CSV folders; the API Key is not stored there.
 -   **Safe output**: Each CSV is written to a dedicated temporary file in the output directory, flushed, closed, and only then atomically replaces the destination. Read, translation, or write failures never overwrite the last successful output, and orderly interruption cleans up the temporary file.
 -   **Result states**: `success` means the file completed without cell failures; `partial` means at least one cell succeeded while failed cells retained their original values; `failed` means there was no successful translation to commit or a file-level error occurred, so no new output is committed. Mixed batches are clearly shown as partially complete in the UI.
 -   **Failure list**: The log identifies failed cells by filename, CSV row, target column, target language, and a safe error message. It never includes source text, translated text, or the API Key, making failures safe to locate and retry.
--   **Unity compatibility scope**: Automated tests use the `Key,Id,Locale...` and CSV (With Comments) structures documented for Unity Localization 1.4, including valid variants with only `Key` or `Id`. Custom columns are preserved, but custom Locale Field Names cannot be identified automatically as language columns, and other package versions have not been verified end-to-end in the Unity Editor.
+-   **Unity compatibility scope**: Tested compatibility covers the `Key,Id,Locale...` and CSV (With Comments) CSV structures documented for Unity Localization 1.4, including valid variants with only `Key` or `Id`. This is automated CSV-level testing, not end-to-end verification of every Unity Editor/package version. Known limitations: the source column is fixed to `English(en)`; custom Locale Field Names cannot be detected automatically as language columns; and other Unity Localization versions have not been verified end-to-end in the Unity Editor. Custom non-language columns are preserved unchanged.
 -   **Structure protection**: The tool preserves .NET/Python/printf placeholders, Unity Smart Strings, ICU expressions, rich-text tags, and line breaks. If translated structure differs, the original target cell is kept and the failure is reported. Nested Smart String/ICU expressions are currently protected as a whole, so branch text inside them is not translated.
 -   **Retries and error categories**: The official DeepL SDK retries temporary network failures, server errors, and rate limits with exponential backoff. The app does not add another retry layer or sleep after the terminal failure. Authentication, invalid-request, and quota errors are not retried and stop the batch; the UI shows an actionable message without source text or credentials.
 
