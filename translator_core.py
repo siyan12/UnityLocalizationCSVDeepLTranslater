@@ -21,6 +21,7 @@ import re
 import csv
 import time
 from collections import Counter
+from dataclasses import dataclass
 from typing import Dict, List, Tuple, Any, Optional, Sequence, Callable
 
 try:
@@ -43,6 +44,30 @@ LANG_HEADER_TO_DEEPL = {
     "Russian(ru)": "RU",
     "Spanish(es)": "ES",
     "Turkish(tr)": "TR",
+}
+
+# Standard-looking Unity locale headers that this version cannot translate.
+# Unknown custom column names are preserved because Unity allows arbitrary CSV columns.
+KNOWN_UNSUPPORTED_LANGUAGE_HEADERS = {
+    "Arabic(ar)",
+    "Bulgarian(bg)",
+    "Czech(cs)",
+    "Danish(da)",
+    "Dutch(nl)",
+    "Estonian(et)",
+    "Finnish(fi)",
+    "Greek(el)",
+    "Hungarian(hu)",
+    "Indonesian(id)",
+    "Italian(it)",
+    "Latvian(lv)",
+    "Lithuanian(lt)",
+    "Norwegian(nb)",
+    "Romanian(ro)",
+    "Slovak(sk)",
+    "Slovenian(sl)",
+    "Swedish(sv)",
+    "Ukrainian(uk)",
 }
 
 KEY_COL = "Key"
@@ -88,6 +113,24 @@ def safe_error_message(error: BaseException, secret: str = "") -> str:
 
 class StructureValidationError(ValueError):
     """Protected localization structure is malformed or changed."""
+
+
+class CsvSchemaError(ValueError):
+    """The input CSV cannot be processed without risking structural data loss."""
+
+
+@dataclass(frozen=True)
+class CsvDocument:
+    """Validated CSV content plus encoding details needed for a safe round trip."""
+
+    rows: List[Dict[str, str]]
+    fieldnames: List[str]
+    has_utf8_bom: bool
+
+    def __iter__(self):
+        # Preserve the historical ``rows, fieldnames = load_csv(...)`` API.
+        yield self.rows
+        yield self.fieldnames
 
 
 StructuralPart = Tuple[int, int, str, str]
@@ -263,17 +306,102 @@ def ensure_directories(input_dir: str, output_dir: str) -> None:
     os.makedirs(output_dir, exist_ok=True)
 
 
-def load_csv(path: str) -> Tuple[List[Dict[str, str]], List[str]]:
-    with open(path, "r", encoding="utf-8-sig", newline="") as f:
-        reader = csv.DictReader(f)
-        rows: List[Dict[str, str]] = list(reader)
-        raw_headers: Optional[Sequence[str]] = reader.fieldnames
-        fieldnames: List[str] = list(raw_headers) if raw_headers else []
-    return rows, fieldnames
+def _validate_headers(fieldnames: List[str]) -> None:
+    if not fieldnames:
+        raise CsvSchemaError("CSV is empty or has no header row.")
+
+    empty_positions = [str(index) for index, name in enumerate(fieldnames, start=1) if not name.strip()]
+    if empty_positions:
+        raise CsvSchemaError(
+            "CSV contains empty header names at column(s): " + ", ".join(empty_positions) + "."
+        )
+
+    duplicate_headers = sorted(name for name, count in Counter(fieldnames).items() if count > 1)
+    if duplicate_headers:
+        raise CsvSchemaError(
+            "CSV contains duplicate header name(s): " + ", ".join(repr(name) for name in duplicate_headers) + "."
+        )
 
 
-def write_csv(path: str, fieldnames: List[str], rows: List[Dict[str, Any]]) -> None:
-    with open(path, "w", encoding="utf-8-sig", newline="") as f:
+def _validate_identifier_values(rows: List[Dict[str, str]]) -> None:
+    seen_keys: Dict[str, int] = {}
+    seen_ids: Dict[int, int] = {}
+    for row_number, row in enumerate(rows, start=2):
+        key = row.get(KEY_COL, "").strip()
+        raw_id = row.get(ID_COL, "").strip()
+        numeric_id = 0
+
+        if raw_id:
+            try:
+                numeric_id = int(raw_id)
+            except ValueError as error:
+                raise CsvSchemaError(
+                    f"Row {row_number} has an invalid 'Id' value; expected a non-negative integer."
+                ) from error
+            if numeric_id < 0:
+                raise CsvSchemaError(
+                    f"Row {row_number} has an invalid 'Id' value; expected a non-negative integer."
+                )
+
+        if not key and numeric_id == 0:
+            raise CsvSchemaError(
+                f"Row {row_number} must have a non-empty 'Key' or a positive 'Id'."
+            )
+
+        if key:
+            if key in seen_keys:
+                raise CsvSchemaError(
+                    f"Row {row_number} duplicates 'Key' value from row {seen_keys[key]}."
+                )
+            seen_keys[key] = row_number
+
+        # Unity uses an empty or zero Id for new entries, so only assigned Ids are unique.
+        if numeric_id > 0:
+            if numeric_id in seen_ids:
+                raise CsvSchemaError(
+                    f"Row {row_number} duplicates 'Id' value from row {seen_ids[numeric_id]}."
+                )
+            seen_ids[numeric_id] = row_number
+
+
+def load_csv(path: str) -> CsvDocument:
+    """Read UTF-8 CSV strictly and retain whether the input used a UTF-8 BOM."""
+    try:
+        with open(path, "rb") as raw_file:
+            has_utf8_bom = raw_file.read(3) == b"\xef\xbb\xbf"
+
+        with open(path, "r", encoding="utf-8-sig", newline="") as f:
+            reader = csv.reader(f, strict=True)
+            try:
+                fieldnames = next(reader)
+            except StopIteration as error:
+                raise CsvSchemaError("CSV is empty or has no header row.") from error
+
+            _validate_headers(fieldnames)
+            rows: List[Dict[str, str]] = []
+            for record_number, values in enumerate(reader, start=2):
+                if len(values) != len(fieldnames):
+                    raise CsvSchemaError(
+                        f"CSV record {record_number} (ending at physical line {reader.line_num}) "
+                        f"has {len(values)} fields; expected {len(fieldnames)}."
+                    )
+                rows.append(dict(zip(fieldnames, values)))
+    except UnicodeDecodeError as error:
+        raise CsvSchemaError("CSV must be UTF-8 encoded, with or without a UTF-8 BOM.") from error
+    except csv.Error as error:
+        raise CsvSchemaError(f"Malformed CSV near physical line {getattr(reader, 'line_num', '?')}: {error}") from error
+
+    return CsvDocument(rows=rows, fieldnames=fieldnames, has_utf8_bom=has_utf8_bom)
+
+
+def write_csv(
+    path: str,
+    fieldnames: List[str],
+    rows: List[Dict[str, Any]],
+    preserve_utf8_bom: bool = True,
+) -> None:
+    encoding = "utf-8-sig" if preserve_utf8_bom else "utf-8"
+    with open(path, "w", encoding=encoding, newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, quoting=csv.QUOTE_MINIMAL)
         writer.writeheader()
         for r in rows:
@@ -281,8 +409,26 @@ def write_csv(path: str, fieldnames: List[str], rows: List[Dict[str, Any]]) -> N
 
 
 def detect_language_columns(fieldnames: List[str], source_col: str) -> Tuple[str, Dict[str, str]]:
+    _validate_headers(fieldnames)
+    if KEY_COL not in fieldnames and ID_COL not in fieldnames:
+        raise CsvSchemaError(
+            "Missing Unity Localization identity column: CSV must contain 'Key' or 'Id'."
+        )
     if source_col not in fieldnames:
-        raise ValueError(f"Source column '{source_col}' not found in CSV headers.")
+        raise CsvSchemaError(f"Source language column '{source_col}' not found in CSV headers.")
+    if source_col != DEFAULT_SOURCE_COL:
+        raise CsvSchemaError(
+            f"Unsupported source language column: '{source_col}'. "
+            f"This version only supports '{DEFAULT_SOURCE_COL}' as the source."
+        )
+
+    unsupported = [header for header in fieldnames if header in KNOWN_UNSUPPORTED_LANGUAGE_HEADERS]
+    if unsupported:
+        raise CsvSchemaError(
+            "Unsupported language column(s): " + ", ".join(repr(name) for name in unsupported)
+            + ". Remove them or add an explicit DeepL language mapping before translating."
+        )
+
     targets: Dict[str, str] = {}
     for h in fieldnames:
         if h in (KEY_COL, ID_COL, source_col):
@@ -291,7 +437,7 @@ def detect_language_columns(fieldnames: List[str], source_col: str) -> Tuple[str
         if code:
             targets[h] = code
     if not targets:
-        raise ValueError("No translatable language columns detected from headers.")
+        raise CsvSchemaError("No supported target language columns were found in CSV headers.")
     return source_col, targets
 
 
@@ -563,8 +709,10 @@ def run_translation_for_folder(
 
         log(f"[{idx}/{len(all_files)}] Processing file: {filename}")
         try:
-            rows, fieldnames = load_csv(in_path)
+            document = load_csv(in_path)
+            rows, fieldnames = document
             source, targets_map = detect_language_columns(fieldnames, source_col)
+            _validate_identifier_values(rows)
 
             new_rows, stats = process_rows(
                 rows,
@@ -575,7 +723,12 @@ def run_translation_for_folder(
                 logger=log,
             )
 
-            write_csv(out_path, fieldnames, new_rows)
+            write_csv(
+                out_path,
+                fieldnames,
+                new_rows,
+                preserve_utf8_bom=document.has_utf8_bom,
+            )
 
             # Logs & summary
             log(f" - Rows: {stats['rows']}, Translated cells: {stats['translated_cells']}, "

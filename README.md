@@ -23,7 +23,7 @@ Use deepL API to translate CSV table that outputed from Unity Localization.
 
 ## ✨ 功能特性
 
--   **专为 Unity 设计**：完美适配 Unity Localization 插件导出的 CSV 格式。
+-   **专为 Unity 设计**：支持 Unity Localization 1.4 文档中的标准 CSV 与 CSV (With Comments) 表格结构。
 -   **图形化界面**：简洁直观的图形界面，无需命令行操作。
 -   **批量翻译**：一次性将 CSV 文件中的文本翻译成多种指定语言。
 -   **安全配置**：DeepL API Key 保存到操作系统凭据库，不写入项目或 `config.ini`。
@@ -44,7 +44,7 @@ Use deepL API to translate CSV table that outputed from Unity Localization.
 3.  **运行与翻译**
     -   双击运行 `CSVTranslator.exe`。
     -   在程序界面的 **API Key 输入框**中填入 Key，然后点击 **Save API Key**；Key 会保存到操作系统凭据库。
-    -   选择源语言、目标语言，然后点击“开始翻译”。
+    -   当前版本固定从 `English(en)` 翻译，并自动填充文件中检测到的受支持目标语言列；点击“开始翻译”。
     -   翻译完成后，结果会保存在界面显示的 `output` 文件夹中。
 
 ---
@@ -67,7 +67,10 @@ Use deepL API to translate CSV table that outputed from Unity Localization.
 -   **凭据库不可用**：程序会明确报错且不会退回明文保存。请确认已安装 `keyring`，并确保系统凭据服务可用。
 -   **隐私**：待翻译的 CSV 文本会发送给 DeepL；程序不会额外上传这些文本，UI 日志也不会显示源文或译文内容。
 -   **费用**：DeepL API 的免费额度有限，请注意使用量，避免产生不必要的费用。
--   **CSV 格式**：请确保你的 CSV 文件来自 Unity Localization 插件，并包含 `Key` 列和源语言列（例如 `en`）。
+-   **CSV 格式**：文件必须是带或不带 UTF-8 BOM 的 UTF-8 CSV，包含 `Key` 或 `Id` 标识列、固定源列 `English(en)`，以及至少一个受支持的目标语言列。每行必须有非空 `Key` 或正数 `Id`；新条目可在有 `Key` 时将 `Id` 留空或设为 `0`。空/重复表头、字段数量异常、重复的非空 Key/已分配 Id 和已知但不支持的标准语言列会在调用 DeepL 前以文件级错误拒绝；不会生成该文件的输出。
+-   **支持的目标列**：`Chinese (Simplified)(zh)`、`Chinese (Traditional)(zh-Hant)`、`French(fr)`、`German(de)`、`Japanese(ja)`、`Korean(ko)`、`Polish(pl)`、`Portuguese(pt)`、`Russian(ru)`、`Spanish(es)`、`Turkish(tr)`。评论列与自定义元数据列会原样保留，不会送去翻译。
+-   **往返保证**：保留输入是否含 UTF-8 BOM、表头和列顺序、逻辑行顺序，以及字段中的逗号、双引号和多行文本。输出采用标准 CSV 最小引号规则，因此不承诺与输入逐字节相同。
+-   **Unity 兼容范围**：自动测试以 Unity Localization 1.4 文档给出的 `Key,Id,Locale...` 与 CSV (With Comments) 结构为基准，并支持仅含 `Key` 或 `Id` 的合法变体。自定义列会保留；但自定义 Locale Field Name 无法自动识别为语言列，其他包版本也尚未做 Unity Editor 端到端验证。
 -   **结构保护**：工具会保留 .NET/Python/printf 占位符、Unity Smart String、ICU、富文本标签与换行；如果译文结构不同，该单元格会保留原值并报告失败。当前嵌套 Smart String/ICU 会整段保护，因此表达式内部的分支文案不会翻译。
 
 ## 🧪 离线测试
@@ -111,7 +114,7 @@ There might be some undiscovered bugs or oversights. I would be very grateful if
 
 ## ✨ Features
 
--   **Designed for Unity**: Perfectly compatible with the CSV format exported by the Unity Localization package.
+-   **Designed for Unity**: Supports the standard CSV and CSV (With Comments) table layouts documented for Unity Localization 1.4.
 -   **GUI**: Simple and intuitive graphical user interface, no command line needed.
 -   **Batch Translation**: Translate text in a CSV file into multiple target languages at once.
 -   **Secure Configuration**: The DeepL API Key is stored in the operating system credential store, never in the project or `config.ini`.
@@ -132,7 +135,7 @@ There might be some undiscovered bugs or oversights. I would be very grateful if
 3.  **Run and Translate**
     -   Double-click `CSVTranslator.exe` to run it.
     -   Enter your DeepL API Key in the UI and click **Save API Key**. It is saved in the operating system credential store.
-    -   Select the source and target languages, then click "Start Translation."
+    -   This version always translates from `English(en)` and automatically fills the supported target-language columns detected in the file. Click "Start Translation."
     -   The translated file will be saved in the `output` folder shown in the UI.
 
 ---
@@ -155,7 +158,10 @@ and `output` CSV folders; the API Key is not stored there.
 -   **Unavailable credential store**: The application reports an error and never falls back to plaintext. Ensure `keyring` is installed and the OS credential service is available.
 -   **Privacy**: CSV text selected for translation is sent to DeepL. The application does not upload it elsewhere, and the UI log does not display source or translated text.
 -   **Costs**: The DeepL API has a limited free tier. Be mindful of your usage to avoid unexpected charges.
--   **CSV Format**: Ensure your CSV file is from the Unity Localization package and contains a `Key` column and a source language column (e.g., `en`).
+-   **CSV Format**: Files must be UTF-8 CSV, with or without a UTF-8 BOM, and contain a `Key` or `Id` identity column, the fixed `English(en)` source column, and at least one supported target-language column. Every row needs a non-empty `Key` or a positive `Id`; new entries may use an empty or zero `Id` when a `Key` is present. Empty or duplicate headers, inconsistent field counts, duplicate non-empty Keys/assigned Ids, and known unsupported standard language columns are rejected with a file-level error before DeepL is called; no output is produced for that file.
+-   **Supported target columns**: `Chinese (Simplified)(zh)`, `Chinese (Traditional)(zh-Hant)`, `French(fr)`, `German(de)`, `Japanese(ja)`, `Korean(ko)`, `Polish(pl)`, `Portuguese(pt)`, `Russian(ru)`, `Spanish(es)`, and `Turkish(tr)`. Comment and custom metadata columns are preserved and are not sent for translation.
+-   **Round-trip guarantees**: The tool preserves the input BOM state, header and column order, logical row order, and commas, double quotes, and multiline text inside fields. Output uses standard minimal CSV quoting, so byte-for-byte identity is not promised.
+-   **Unity compatibility scope**: Automated tests use the `Key,Id,Locale...` and CSV (With Comments) structures documented for Unity Localization 1.4, including valid variants with only `Key` or `Id`. Custom columns are preserved, but custom Locale Field Names cannot be identified automatically as language columns, and other package versions have not been verified end-to-end in the Unity Editor.
 -   **Structure protection**: The tool preserves .NET/Python/printf placeholders, Unity Smart Strings, ICU expressions, rich-text tags, and line breaks. If translated structure differs, the original target cell is kept and the failure is reported. Nested Smart String/ICU expressions are currently protected as a whole, so branch text inside them is not translated.
 
 ## 🧪 Offline Tests
