@@ -55,6 +55,8 @@ def test_skip_and_preserve_statistics_are_counted_without_api_calls():
         "skipped_source_invalid": 2,
         "errors": 0,
         "failed_cells": [],
+        "api_requests": 1,
+        "cache_hits": 0,
     }
     assert len(client.calls) == 1
 

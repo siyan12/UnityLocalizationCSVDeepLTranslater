@@ -19,6 +19,7 @@ translator_core.py
 import os
 import re
 import csv
+import json
 import tempfile
 import warnings
 from collections import Counter
@@ -91,6 +92,9 @@ TOKEN_PREFIX_TEMPLATE = "__UL10N{generation}_PH_"
 TOKEN_SUFFIX = "__"
 FAILURE_LOG_LIMIT = 100
 FATAL_PROVIDER_CATEGORIES = {"authentication", "quota", "invalid_request"}
+MAX_BATCH_TEXTS = 50
+# Keep headroom below DeepL's 128 KiB total request limit for JSON and options.
+MAX_BATCH_TEXT_BYTES = 120 * 1024
 
 Logger = Callable[[str], None]
 
@@ -116,7 +120,7 @@ def safe_error_message(error: BaseException, secret: str = "") -> str:
 
 def _safe_cell_error_message(error: BaseException) -> str:
     """Return only controlled messages; arbitrary exceptions may echo private cell text."""
-    if isinstance(error, StructureValidationError):
+    if isinstance(error, (StructureValidationError, CellTranslationError)):
         return safe_error_message(error)
     if isinstance(error, TranslationProviderError):
         return str(error)
@@ -137,6 +141,14 @@ class TranslationProviderError(RuntimeError):
     def __init__(self, message: str, category: str):
         super().__init__(message)
         self.category = category
+
+
+class TranslationCancelled(RuntimeError):
+    """An orderly user cancellation; the current file must not be committed."""
+
+
+class CellTranslationError(ValueError):
+    """A safe, cell-scoped failure that may be shown without source text."""
 
 
 @dataclass(frozen=True)
@@ -441,6 +453,7 @@ def write_csv_atomic(
     rows: List[Dict[str, Any]],
     preserve_utf8_bom: bool = True,
     cleanup_logger: Optional[Logger] = None,
+    cancel_event: Optional[Any] = None,
 ) -> None:
     """Write a CSV beside its destination and atomically commit it when complete."""
     output_dir = os.path.dirname(os.path.abspath(path))
@@ -463,9 +476,11 @@ def write_csv_atomic(
             )
             writer.writeheader()
             for row in rows:
+                _check_cancelled(cancel_event)
                 writer.writerow(row)
             temp_file.flush()
             os.fsync(temp_file.fileno())
+        _check_cancelled(cancel_event)
         os.replace(temp_path, path)
         committed = True
     finally:
@@ -673,28 +688,76 @@ def classify_provider_error(error: BaseException) -> ProviderErrorClassification
     )
 
 
-def translate_text(
+def translate_texts(
     translator: Any,
-    text: str,
+    texts: Sequence[str],
     target_lang: str,
-) -> str:
-    """Translate once; the official DeepL SDK owns transient HTTP retries."""
+) -> List[str]:
+    """Translate one API batch; the official SDK owns transient HTTP retries."""
     try:
         result = translator.translate_text(
-            text,
+            list(texts),
             target_lang=target_lang,
             source_lang="EN",
             preserve_formatting=True,
             split_sentences="nonewlines",
             formality="default",
         )
-        return result.text if hasattr(result, "text") else str(result)
+        results = result if isinstance(result, (list, tuple)) else [result]
+        if len(results) != len(texts):
+            raise CellTranslationError("DeepL returned an unexpected translation count.")
+        translated: List[str] = []
+        for item in results:
+            if not hasattr(item, "text") or not isinstance(item.text, str):
+                raise CellTranslationError(
+                    "DeepL returned an invalid translation response."
+                )
+            translated.append(item.text)
+        return translated
+    except CellTranslationError:
+        raise
     except Exception as error:
         classification = classify_provider_error(error)
         raise TranslationProviderError(
             classification.user_message,
             classification.category,
         ) from error
+
+
+def translate_text(translator: Any, text: str, target_lang: str) -> str:
+    """Backward-compatible single-text wrapper around batched translation."""
+    return translate_texts(translator, [text], target_lang)[0]
+
+
+def _check_cancelled(cancel_event: Optional[Any]) -> None:
+    if cancel_event is not None and cancel_event.is_set():
+        raise TranslationCancelled("Translation cancelled by user.")
+
+
+def _translation_batches(items: Sequence[Tuple[Tuple[str, str], str]]):
+    batch: List[Tuple[Tuple[str, str], str]] = []
+    byte_count = 0
+    for item in items:
+        # JSON encoding accounts for quotes, backslashes and control characters.
+        item_bytes = len(json.dumps(item[1], ensure_ascii=False).encode("utf-8")) + 1
+        if item_bytes > MAX_BATCH_TEXT_BYTES:
+            if batch:
+                yield batch
+                batch = []
+                byte_count = 0
+            yield [item]
+            continue
+        if batch and (
+            len(batch) >= MAX_BATCH_TEXTS
+            or byte_count + item_bytes > MAX_BATCH_TEXT_BYTES
+        ):
+            yield batch
+            batch = []
+            byte_count = 0
+        batch.append(item)
+        byte_count += item_bytes
+    if batch:
+        yield batch
 
 
 def should_fill_cell(current_value: Any, preserve_existing: bool) -> bool:
@@ -707,6 +770,86 @@ def should_fill_cell(current_value: Any, preserve_existing: bool) -> bool:
     return False
 
 
+def estimate_translation_for_folder(
+    input_dir: str,
+    source_col: str = DEFAULT_SOURCE_COL,
+    overwrite_existing: bool = False,
+    cancel_event: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """Scan input without contacting DeepL and estimate task size safely."""
+    estimate = {
+        "files": 0,
+        "eligible_cells": 0,
+        "unique_requests": 0,
+        "characters": 0,
+        "unique_characters": 0,
+        "target_languages": 0,
+        "errors": [],
+        "input_snapshot": {},
+    }
+    unique_requests: Dict[Tuple[str, str], int] = {}
+    languages = set()
+    if not os.path.isdir(input_dir):
+        return estimate
+
+    all_files = sorted(
+        filename
+        for filename in os.listdir(input_dir)
+        if filename.lower().endswith(".csv")
+        and os.path.isfile(os.path.join(input_dir, filename))
+    )
+    for filename in all_files:
+        _check_cancelled(cancel_event)
+        try:
+            document = load_csv(os.path.join(input_dir, filename))
+            rows, fieldnames = document
+            source, targets_map = detect_language_columns(fieldnames, source_col)
+            _validate_identifier_values(rows)
+            estimate["files"] += 1
+            for row in rows:
+                source_text = row.get(source, "")
+                if is_skippable_source(source_text):
+                    continue
+                try:
+                    tokenized, _ = tokenize_placeholders(source_text)
+                except StructureValidationError:
+                    continue
+                for header, target_lang in targets_map.items():
+                    if not should_fill_cell(row.get(header, ""), not overwrite_existing):
+                        continue
+                    text = str(source_text)
+                    billable_characters = len(tokenized)
+                    estimate["eligible_cells"] += 1
+                    estimate["characters"] += billable_characters
+                    languages.add(target_lang)
+                    unique_requests.setdefault(
+                        (text, target_lang), billable_characters
+                    )
+                _check_cancelled(cancel_event)
+        except (CsvSchemaError, OSError) as error:
+            estimate["errors"].append(
+                {"file": filename, "error": safe_error_message(error)}
+            )
+
+    estimate["unique_requests"] = len(unique_requests)
+    estimate["unique_characters"] = sum(unique_requests.values())
+    estimate["target_languages"] = len(languages)
+    estimate["input_snapshot"] = _input_csv_snapshot(input_dir)
+    return estimate
+
+
+def _input_csv_snapshot(input_dir: str) -> Dict[str, Tuple[int, int]]:
+    if not os.path.isdir(input_dir):
+        return {}
+    snapshot: Dict[str, Tuple[int, int]] = {}
+    for filename in sorted(os.listdir(input_dir)):
+        path = os.path.join(input_dir, filename)
+        if filename.lower().endswith(".csv") and os.path.isfile(path):
+            stat = os.stat(path)
+            snapshot[filename] = (stat.st_size, stat.st_mtime_ns)
+    return snapshot
+
+
 def process_rows(
     rows: List[Dict[str, Any]],
     source_col: str,
@@ -714,8 +857,10 @@ def process_rows(
     translator: Any,
     preserve_existing: bool = True,
     logger: Optional[Logger] = None,
+    translation_cache: Optional[Dict[Tuple[str, str], str]] = None,
+    cancel_event: Optional[Any] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    cache: Dict[Tuple[str, str], str] = {}
+    cache = translation_cache if translation_cache is not None else {}
     stats = {
         "rows": len(rows),
         "translated_cells": 0,
@@ -723,15 +868,18 @@ def process_rows(
         "skipped_source_invalid": 0,
         "errors": 0,
         "failed_cells": [],
+        "api_requests": 0,
+        "cache_hits": 0,
     }
+    new_rows = [dict(row) for row in rows]
+    pending_by_language: Dict[str, Dict[Tuple[str, str], Tuple[str, str, Dict[str, str]]]] = {}
+    cell_work: List[Tuple[int, str, str, Tuple[str, str]]] = []
 
-    new_rows: List[Dict[str, Any]] = []
-
-    for idx, row in enumerate(rows, start=1):
+    for idx, row in enumerate(new_rows, start=1):
+        _check_cancelled(cancel_event)
         source_text = row.get(source_col, "")
         if is_skippable_source(source_text):
             stats["skipped_source_invalid"] += 1
-            new_rows.append(row)
             continue
 
         try:
@@ -756,7 +904,6 @@ def process_rows(
                         )
                 else:
                     stats["skipped_existing"] += 1
-            new_rows.append(row)
             continue
 
         for header, target_lang in targets_map.items():
@@ -765,51 +912,69 @@ def process_rows(
                 stats["skipped_existing"] += 1
                 continue
 
-            if logger:
-                logger(f"Translating row {idx} to {target_lang}")
-
-            key_cache = (tokenized, target_lang)
-            try:
-                from_cache = key_cache in cache
-                if key_cache in cache:
-                    translated = cache[key_cache]
-                    if logger:
-                        logger("  -> Cache hit")
-                else:
-                    translated = translate_text(translator, tokenized, target_lang)
-                    if logger:
-                        logger("  -> API call success")
-
-                detok = detokenize_placeholders(translated, mapping)
-                if str(detok).strip() == "":
-                    raise StructureValidationError("Translation returned empty text.")
-                validate_translated_structure(source_text, detok)
-                if not from_cache:
-                    cache[key_cache] = translated
-                row[header] = detok
-                stats["translated_cells"] += 1
-                if logger:
-                    logger(f"  -> Filled '{header}'")
-            except Exception as e:
-                if (
-                    isinstance(e, TranslationProviderError)
-                    and e.category in FATAL_PROVIDER_CATEGORIES
-                ):
-                    raise
-                safe_error = _safe_cell_error_message(e)
-                stats["errors"] += 1
-                stats["failed_cells"].append(
-                    {
-                        "row": idx + 1,
-                        "column": header,
-                        "target_lang": target_lang,
-                        "error": safe_error,
-                    }
+            key_cache = (str(source_text), target_lang)
+            cell_work.append((idx - 1, header, target_lang, key_cache))
+            if key_cache not in cache:
+                pending_by_language.setdefault(target_lang, {}).setdefault(
+                    key_cache, (tokenized, str(source_text), mapping)
                 )
-                if logger:
-                    logger(f"  -> FAILED for '{header}': {safe_error}")
 
-        new_rows.append(row)
+    failures: Dict[Tuple[str, str], str] = {}
+    for target_lang, pending in pending_by_language.items():
+        items = [(key, data[0]) for key, data in pending.items()]
+        for batch in _translation_batches(items):
+            _check_cancelled(cancel_event)
+            if (
+                len(batch) == 1
+                and len(json.dumps(batch[0][1], ensure_ascii=False).encode("utf-8")) + 1
+                > MAX_BATCH_TEXT_BYTES
+            ):
+                failures[batch[0][0]] = "Source text is too large for a safe DeepL request."
+                continue
+            try:
+                translated_batch = translate_texts(
+                    translator, [tokenized for _, tokenized in batch], target_lang
+                )
+                stats["api_requests"] += 1
+                if logger:
+                    logger(f"Translated API batch: {len(batch)} text(s) to {target_lang}.")
+                for (key_cache, _), translated in zip(batch, translated_batch):
+                    tokenized, source_text, mapping = pending[key_cache]
+                    try:
+                        detok = detokenize_placeholders(translated, mapping)
+                        if str(detok).strip() == "":
+                            raise StructureValidationError("Translation returned empty text.")
+                        validate_translated_structure(source_text, detok)
+                        cache[key_cache] = detok
+                    except Exception as error:
+                        failures[key_cache] = _safe_cell_error_message(error)
+            except Exception as error:
+                if isinstance(error, TranslationProviderError) and error.category in FATAL_PROVIDER_CATEGORIES:
+                    raise
+                safe_error = _safe_cell_error_message(error)
+                for key_cache, _ in batch:
+                    failures[key_cache] = safe_error
+
+    for row_index, header, target_lang, key_cache in cell_work:
+        _check_cancelled(cancel_event)
+        if key_cache in cache:
+            new_rows[row_index][header] = cache[key_cache]
+            stats["translated_cells"] += 1
+            if key_cache not in pending_by_language.get(target_lang, {}):
+                stats["cache_hits"] += 1
+        else:
+            safe_error = failures.get(key_cache, "Cell processing failed (RuntimeError).")
+            stats["errors"] += 1
+            stats["failed_cells"].append(
+                {
+                    "row": row_index + 2,
+                    "column": header,
+                    "target_lang": target_lang,
+                    "error": safe_error,
+                }
+            )
+            if logger:
+                logger(f"  -> FAILED for '{header}': {safe_error}")
 
     return new_rows, stats
 
@@ -843,6 +1008,8 @@ def run_translation_for_folder(
     source_col: str = DEFAULT_SOURCE_COL,
     overwrite_existing: bool = False,
     logger: Optional[Logger] = None,
+    cancel_event: Optional[Any] = None,
+    expected_input_snapshot: Optional[Dict[str, Tuple[int, int]]] = None,
 ) -> Dict[str, Any]:
     """
     批量翻译 input_dir 下所有 .csv 文件，输出到 output_dir。
@@ -861,13 +1028,21 @@ def run_translation_for_folder(
     if not api_key:
         raise RuntimeError("Missing DeepL API Key.")
 
+    if (
+        expected_input_snapshot is not None
+        and _input_csv_snapshot(input_dir) != expected_input_snapshot
+    ):
+        raise RuntimeError(
+            "Input CSV files changed after the estimate. Review the files and start again."
+        )
+
     translator = deepl.Translator(api_key)
 
     # 收集文件
-    all_files = [
+    all_files = sorted([
         f for f in os.listdir(input_dir)
         if f.lower().endswith(".csv") and os.path.isfile(os.path.join(input_dir, f))
-    ]
+    ])
 
     summary = {
         "status": "failed",
@@ -884,6 +1059,10 @@ def run_translation_for_folder(
         "file_results": [],
         "provider_error_category": None,
         "fatal_error": "",
+        "cancelled": False,
+        "cancelled_file": "",
+        "api_requests": 0,
+        "cache_hits": 0,
     }
 
     if not all_files:
@@ -891,6 +1070,7 @@ def run_translation_for_folder(
         return summary
 
     log(f"Found {len(all_files)} CSV files, starting...")
+    translation_cache: Dict[Tuple[str, str], str] = {}
     for idx, filename in enumerate(all_files, start=1):
         in_path = os.path.join(input_dir, filename)
         out_path = os.path.join(output_dir, filename)
@@ -898,6 +1078,7 @@ def run_translation_for_folder(
         log(f"[{idx}/{len(all_files)}] Processing file: {filename}")
         stats: Optional[Dict[str, Any]] = None
         try:
+            _check_cancelled(cancel_event)
             document = load_csv(in_path)
             rows, fieldnames = document
             source, targets_map = detect_language_columns(fieldnames, source_col)
@@ -910,7 +1091,11 @@ def run_translation_for_folder(
                 translator,
                 preserve_existing=not overwrite_existing,
                 logger=log,
+                translation_cache=translation_cache,
+                cancel_event=cancel_event,
             )
+
+            _check_cancelled(cancel_event)
 
             failed_cells = [
                 {"file": filename, **failure}
@@ -942,6 +1127,7 @@ def run_translation_for_folder(
                 new_rows,
                 preserve_utf8_bom=document.has_utf8_bom,
                 cleanup_logger=log,
+                cancel_event=cancel_event,
             )
 
             file_result = {
@@ -969,8 +1155,17 @@ def run_translation_for_folder(
             summary["skipped_existing"] += stats["skipped_existing"]
             summary["skipped_source_invalid"] += stats["skipped_source_invalid"]
             summary["errors"] += stats["errors"]
+            summary["api_requests"] += stats["api_requests"]
+            summary["cache_hits"] += stats["cache_hits"]
             summary["failed_cells"].extend(failed_cells)
             summary["file_results"].append(file_result)
+        except TranslationCancelled:
+            summary["cancelled"] = True
+            summary["cancelled_file"] = filename
+            log(
+                f" - Status: CANCELLED; current file was not committed: {filename}"
+            )
+            break
         except Exception as e:
             provider_error = e if isinstance(e, TranslationProviderError) else None
             safe_error = (
@@ -1007,7 +1202,9 @@ def run_translation_for_folder(
                 log("Batch stopped because this provider error cannot succeed on retry.")
                 break
 
-    if summary["failed_files"] == 0 and summary["partial_files"] == 0:
+    if summary["cancelled"]:
+        summary["status"] = "cancelled"
+    elif summary["failed_files"] == 0 and summary["partial_files"] == 0:
         summary["status"] = "success"
     elif summary["files"] > 0:
         summary["status"] = "partial"
@@ -1026,7 +1223,7 @@ def run_translation_for_folder(
         if remaining_failures > 0:
             log(f" - ... {remaining_failures} additional failed cell(s) are in the returned report.")
 
-    log("All processing completed.")
+    log("Processing cancelled." if summary["cancelled"] else "All processing completed.")
     log(f"Status: {summary['status'].upper()}; Files committed: {summary['files']}, "
         f"Successful: {summary['successful_files']}, Partial: {summary['partial_files']}, "
         f"Failed: {summary['failed_files']}, Total rows: {summary['rows']}, "

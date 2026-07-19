@@ -222,4 +222,5 @@ def test_empty_and_zero_ids_are_allowed_when_keys_are_present(tmp_path, monkeypa
 
     assert summary["files"] == 1
     assert summary["errors"] == 0
-    assert len(client.calls) == 3
+    assert len(client.calls) == 1
+    assert client.calls[0][0] == ["Hello", "Again", "Third"]

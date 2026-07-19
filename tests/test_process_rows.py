@@ -90,7 +90,8 @@ def test_invalid_response_is_not_cached():
 
     assert [row[DE_COL] for row in result] == ["", ""]
     assert stats["errors"] == 2
-    assert len(client.calls) == 2
+    # Duplicate work is sent once per task, but invalid output never enters the cache.
+    assert len(client.calls) == 1
 
 
 def test_valid_response_is_cached():

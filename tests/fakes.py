@@ -8,4 +8,9 @@ class FakeDeepLClient:
 
     def translate_text(self, text, **kwargs):
         self.calls.append((text, kwargs))
+        if isinstance(text, list):
+            return [
+                SimpleNamespace(text=self.responder(item, kwargs))
+                for item in text
+            ]
         return SimpleNamespace(text=self.responder(text, kwargs))

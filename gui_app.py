@@ -24,7 +24,9 @@ from tkinter import ttk, messagebox
 from tkinter.scrolledtext import ScrolledText
 
 from translator_core import (
+    TranslationCancelled,
     ensure_directories,
+    estimate_translation_for_folder,
     safe_error_message,
     test_api_key,
     run_translation_for_folder,
@@ -55,6 +57,7 @@ class GuiApp(tk.Tk):
         self.overwrite_var = tk.BooleanVar(value=False)
         self.log_queue: "queue.Queue[str]" = queue.Queue()
         self.worker_thread: threading.Thread | None = None
+        self.cancel_event: threading.Event | None = None
 
         self._build_ui()
 
@@ -108,7 +111,14 @@ class GuiApp(tk.Tk):
         action_frame = ttk.Frame(self)
         action_frame.pack(fill=tk.X, **pad)
         self.start_btn = ttk.Button(action_frame, text="Start Batch Translation", command=self._on_start)
-        self.start_btn.pack(pady=4)
+        self.start_btn.pack(side=tk.LEFT, expand=True, pady=4)
+        self.cancel_btn = ttk.Button(
+            action_frame,
+            text="Cancel",
+            command=self._on_cancel,
+            state="disabled",
+        )
+        self.cancel_btn.pack(side=tk.LEFT, expand=True, pady=4)
 
         # 日志区域
         log_frame = ttk.LabelFrame(self, text="Logs & Status")
@@ -169,24 +179,54 @@ class GuiApp(tk.Tk):
             messagebox.showerror("Error", "Please enter and save a valid API Key first.")
             return
 
-        self._disable_controls(True)
-        self._log("Starting batch translation...")
+        self._disable_controls(True, cancellable=True)
+        self._log("Scanning input files for a translation estimate...")
         overwrite = self.overwrite_var.get()
+        self.cancel_event = threading.Event()
+        cancel_event = self.cancel_event
 
         def do_work():
             try:
+                estimate = estimate_translation_for_folder(
+                    INPUT_DIR,
+                    overwrite_existing=overwrite,
+                    cancel_event=cancel_event,
+                )
+                decision_event = threading.Event()
+                decision = {"proceed": False}
+                self.log_queue.put(
+                    ("__TRANSLATION_ESTIMATE__", estimate, decision_event, decision)
+                )
+                while not decision_event.wait(0.1):
+                    if cancel_event.is_set():
+                        raise TranslationCancelled(
+                            "Translation cancelled before confirmation."
+                        )
+                if not decision["proceed"]:
+                    raise TranslationCancelled("Translation cancelled before API calls.")
+
+                self.log_queue.put("Starting batch translation...")
                 summary = run_translation_for_folder(
                     api_key=key,
                     input_dir=INPUT_DIR,
                     output_dir=OUTPUT_DIR,
                     overwrite_existing=overwrite,
                     logger=lambda m: self.log_queue.put(m),
+                    cancel_event=cancel_event,
+                    expected_input_snapshot=estimate["input_snapshot"],
                 )
                 self.log_queue.put(
                     f"Summary: status {summary['status']}, committed files {summary['files']}, "
                     f"translated cells {summary['translated_cells']}, errors {summary['errors']}."
                 )
                 self.log_queue.put(("__TRANSLATION_RESULT__", summary))
+            except TranslationCancelled:
+                self.log_queue.put(
+                    (
+                        "__TRANSLATION_RESULT__",
+                        {"status": "cancelled", "files": 0, "cancelled": True},
+                    )
+                )
             except Exception as e:
                 safe_error = safe_error_message(e, key)
                 self.log_queue.put(f"Task failed: {safe_error}")
@@ -197,8 +237,17 @@ class GuiApp(tk.Tk):
         self.worker_thread = threading.Thread(target=do_work, daemon=True)
         self.worker_thread.start()
 
+    def _on_cancel(self):
+        if self.cancel_event is not None:
+            self.cancel_event.set()
+            self.cancel_btn.configure(state="disabled")
+            self._log(
+                "Cancellation requested; an in-flight DeepL request may finish, "
+                "but the current file will not be committed."
+            )
+
     # UI 辅助
-    def _disable_controls(self, busy: bool):
+    def _disable_controls(self, busy: bool, cancellable: bool = False):
         state = "disabled" if busy else "normal"
         for child in self.winfo_children():
             # 只禁用主要交互控件，日志不禁
@@ -213,6 +262,9 @@ class GuiApp(tk.Tk):
         # 单独设置开始按钮
         try:
             self.start_btn.configure(state=state)
+            self.cancel_btn.configure(
+                state="normal" if busy and cancellable else "disabled"
+            )
         except Exception:
             pass
 
@@ -229,7 +281,13 @@ class GuiApp(tk.Tk):
                 if isinstance(msg, tuple) and msg[0] == "__TRANSLATION_RESULT__":
                     summary = msg[1]
                     status = summary["status"]
-                    if status == "success":
+                    if status == "cancelled":
+                        messagebox.showinfo(
+                            "Translation Cancelled",
+                            f"Translation was cancelled. Completed files kept: "
+                            f"{summary.get('files', 0)}. The current file was not committed.",
+                        )
+                    elif status == "success":
                         messagebox.showinfo(
                             "Translation Complete",
                             f"All {summary['successful_files']} file(s) completed successfully.\n"
@@ -261,6 +319,29 @@ class GuiApp(tk.Tk):
                             "No new output files were committed. Existing outputs were not overwritten. "
                             "See the log for details." + fatal_detail,
                         )
+                elif isinstance(msg, tuple) and msg[0] == "__TRANSLATION_ESTIMATE__":
+                    estimate, decision_event, decision = msg[1:]
+                    try:
+                        if self.cancel_event is not None and self.cancel_event.is_set():
+                            decision["proceed"] = False
+                        else:
+                            error_note = (
+                                f"\nFiles with validation errors: {len(estimate['errors'])}."
+                                if estimate["errors"]
+                                else ""
+                            )
+                            decision["proceed"] = messagebox.askyesno(
+                                "Confirm Translation",
+                                f"Eligible cells: {estimate['eligible_cells']}\n"
+                                f"Target languages: {estimate['target_languages']}\n"
+                                f"Characters before cache: {estimate['characters']:,}\n"
+                                f"Estimated characters sent after task cache: "
+                                f"{estimate['unique_characters']:,}\n"
+                                f"Unique translation requests: {estimate['unique_requests']}"
+                                f"{error_note}\n\nContinue?",
+                            )
+                    finally:
+                        decision_event.set()
                 elif isinstance(msg, tuple) and msg[0] == "__TRANSLATION_FATAL__":
                     messagebox.showerror("Translation Failed", f"Task failed: {msg[1]}")
                 elif isinstance(msg, tuple) and msg[0] == "__API_TEST_RESULT__":
@@ -270,6 +351,7 @@ class GuiApp(tk.Tk):
                         messagebox.showerror("API Test", msg[2])
                 elif msg == "__ENABLE__":
                     self._disable_controls(False)
+                    self.cancel_event = None
                 else:
                     self._log(msg)
         except queue.Empty:
