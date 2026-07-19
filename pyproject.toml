@@ -29,6 +29,7 @@ classifiers = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8,<9",
+    "tomli>=2,<3; python_version < '3.11'",
 ]
 build = [
     "pyinstaller>=6.10,<7",
