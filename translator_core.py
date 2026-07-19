@@ -20,6 +20,8 @@ import os
 import re
 import csv
 import time
+import tempfile
+import warnings
 from collections import Counter
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Any, Optional, Sequence, Callable
@@ -88,6 +90,7 @@ TAG_NAME_RE = re.compile(r"[A-Za-z][A-Za-z0-9:_-]*")
 VOID_TAG_NAMES = {"br", "sprite", "space", "quad", "page", "img", "hr"}
 TOKEN_PREFIX_TEMPLATE = "__UL10N{generation}_PH_"
 TOKEN_SUFFIX = "__"
+FAILURE_LOG_LIMIT = 100
 
 Logger = Callable[[str], None]
 
@@ -109,6 +112,16 @@ def safe_error_message(error: BaseException, secret: str = "") -> str:
             message,
         )
     return message
+
+
+def _safe_cell_error_message(error: BaseException) -> str:
+    """Return only controlled messages; arbitrary exceptions may echo private cell text."""
+    if isinstance(error, StructureValidationError):
+        return safe_error_message(error)
+    message = str(error)
+    if isinstance(error, RuntimeError) and message.startswith("Translation failed after "):
+        return message
+    return f"Cell processing failed ({error.__class__.__name__})."
 
 
 class StructureValidationError(ValueError):
@@ -408,6 +421,63 @@ def write_csv(
             writer.writerow(r)
 
 
+def write_csv_atomic(
+    path: str,
+    fieldnames: List[str],
+    rows: List[Dict[str, Any]],
+    preserve_utf8_bom: bool = True,
+    cleanup_logger: Optional[Logger] = None,
+) -> None:
+    """Write a CSV beside its destination and atomically commit it when complete."""
+    output_dir = os.path.dirname(os.path.abspath(path))
+    filename = os.path.basename(path)
+    encoding = "utf-8-sig" if preserve_utf8_bom else "utf-8"
+    file_descriptor, temp_path = tempfile.mkstemp(
+        prefix=f".{filename}.",
+        suffix=".tmp",
+        dir=output_dir,
+    )
+    committed = False
+    try:
+        temp_file = os.fdopen(file_descriptor, "w", encoding=encoding, newline="")
+        file_descriptor = -1
+        with temp_file:
+            writer = csv.DictWriter(
+                temp_file,
+                fieldnames=fieldnames,
+                quoting=csv.QUOTE_MINIMAL,
+            )
+            writer.writeheader()
+            for row in rows:
+                writer.writerow(row)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        os.replace(temp_path, path)
+        committed = True
+    finally:
+        # Includes normal write errors and interruption during an orderly shutdown.
+        if file_descriptor >= 0:
+            try:
+                os.close(file_descriptor)
+            except OSError:
+                pass
+        if not committed:
+            try:
+                os.unlink(temp_path)
+            except FileNotFoundError:
+                pass
+            except OSError as cleanup_error:
+                cleanup_message = (
+                    "Temporary CSV cleanup failed "
+                    f"({cleanup_error.__class__.__name__}); manual removal may be required: "
+                    f"{os.path.basename(temp_path)}"
+                )
+                if cleanup_logger:
+                    cleanup_logger(cleanup_message)
+                else:
+                    warnings.warn(cleanup_message, RuntimeWarning, stacklevel=2)
+
+
 def detect_language_columns(fieldnames: List[str], source_col: str) -> Tuple[str, Dict[str, str]]:
     _validate_headers(fieldnames)
     if KEY_COL not in fieldnames and ID_COL not in fieldnames:
@@ -521,7 +591,7 @@ def translate_text(
     max_retries: int = 5,
     base_delay: float = 0.8,
 ) -> str:
-    last_error = None
+    last_error_type = "UnknownError"
     for attempt in range(max_retries):
         try:
             result = translator.translate_text(
@@ -534,9 +604,12 @@ def translate_text(
             )
             return result.text if hasattr(result, "text") else str(result)
         except Exception as e:
-            last_error = safe_error_message(e)
+            # Provider messages may echo request content; report only the class here.
+            last_error_type = e.__class__.__name__
             time.sleep(base_delay * (2 ** attempt))
-    raise RuntimeError(f"Translation failed after {max_retries} retries: {last_error}")
+    raise RuntimeError(
+        f"Translation failed after {max_retries} retries ({last_error_type})."
+    )
 
 
 def should_fill_cell(current_value: Any, preserve_existing: bool) -> bool:
@@ -556,7 +629,7 @@ def process_rows(
     translator: Any,
     preserve_existing: bool = True,
     logger: Optional[Logger] = None,
-) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     cache: Dict[Tuple[str, str], str] = {}
     stats = {
         "rows": len(rows),
@@ -564,6 +637,7 @@ def process_rows(
         "skipped_existing": 0,
         "skipped_source_invalid": 0,
         "errors": 0,
+        "failed_cells": [],
     }
 
     new_rows: List[Dict[str, Any]] = []
@@ -580,11 +654,20 @@ def process_rows(
         except StructureValidationError as error:
             for header in targets_map:
                 if should_fill_cell(row.get(header, ""), preserve_existing):
+                    safe_error = _safe_cell_error_message(error)
                     stats["errors"] += 1
+                    stats["failed_cells"].append(
+                        {
+                            "row": idx + 1,
+                            "column": header,
+                            "target_lang": targets_map[header],
+                            "error": f"Invalid source structure: {safe_error}",
+                        }
+                    )
                     if logger:
                         logger(
                             f"  -> FAILED for '{header}': "
-                            f"invalid source structure ({safe_error_message(error)})"
+                            f"invalid source structure ({safe_error})"
                         )
                 else:
                     stats["skipped_existing"] += 1
@@ -623,9 +706,18 @@ def process_rows(
                 if logger:
                     logger(f"  -> Filled '{header}'")
             except Exception as e:
+                safe_error = _safe_cell_error_message(e)
                 stats["errors"] += 1
+                stats["failed_cells"].append(
+                    {
+                        "row": idx + 1,
+                        "column": header,
+                        "target_lang": target_lang,
+                        "error": safe_error,
+                    }
+                )
                 if logger:
-                    logger(f"  -> FAILED for '{header}': {safe_error_message(e)}")
+                    logger(f"  -> FAILED for '{header}': {safe_error}")
 
         new_rows.append(row)
 
@@ -663,11 +755,11 @@ def run_translation_for_folder(
     source_col: str = DEFAULT_SOURCE_COL,
     overwrite_existing: bool = False,
     logger: Optional[Logger] = None,
-) -> Dict[str, int]:
+) -> Dict[str, Any]:
     """
     批量翻译 input_dir 下所有 .csv 文件，输出到 output_dir。
     logger: 可选的回调函数，用于输出进度日志。
-    返回一个汇总统计：{files, rows, translated_cells, skipped_existing, skipped_source_invalid, errors}
+    返回兼容的计数，并附带 status、文件结果与不含本地化文本的 failed_cells 清单。
     """
     def log(msg: str) -> None:
         if logger:
@@ -690,12 +782,18 @@ def run_translation_for_folder(
     ]
 
     summary = {
+        "status": "failed",
         "files": 0,
+        "successful_files": 0,
+        "partial_files": 0,
+        "failed_files": 0,
         "rows": 0,
         "translated_cells": 0,
         "skipped_existing": 0,
         "skipped_source_invalid": 0,
         "errors": 0,
+        "failed_cells": [],
+        "file_results": [],
     }
 
     if not all_files:
@@ -708,6 +806,7 @@ def run_translation_for_folder(
         out_path = os.path.join(output_dir, filename)
 
         log(f"[{idx}/{len(all_files)}] Processing file: {filename}")
+        stats: Optional[Dict[str, Any]] = None
         try:
             document = load_csv(in_path)
             rows, fieldnames = document
@@ -723,30 +822,110 @@ def run_translation_for_folder(
                 logger=log,
             )
 
-            write_csv(
+            failed_cells = [
+                {"file": filename, **failure}
+                for failure in stats["failed_cells"]
+            ]
+            if failed_cells and stats["translated_cells"] == 0:
+                failure_reason = "All requested cell translations failed; no output committed."
+                log(f" - Status: FAILED; {failure_reason}")
+                summary["failed_files"] += 1
+                summary["errors"] += stats["errors"]
+                summary["failed_cells"].extend(failed_cells)
+                summary["file_results"].append(
+                    {
+                        "file": filename,
+                        "status": "failed",
+                        "rows": stats["rows"],
+                        "translated_cells": 0,
+                        "errors": stats["errors"],
+                        "failed_cells": failed_cells,
+                        "error": failure_reason,
+                    }
+                )
+                continue
+
+            file_status = "partial" if failed_cells else "success"
+            write_csv_atomic(
                 out_path,
                 fieldnames,
                 new_rows,
                 preserve_utf8_bom=document.has_utf8_bom,
+                cleanup_logger=log,
             )
 
+            file_result = {
+                "file": filename,
+                "status": file_status,
+                "rows": stats["rows"],
+                "translated_cells": stats["translated_cells"],
+                "errors": stats["errors"],
+                "failed_cells": failed_cells,
+            }
+
             # Logs & summary
-            log(f" - Rows: {stats['rows']}, Translated cells: {stats['translated_cells']}, "
+            log(f" - Status: {file_status.upper()}; Rows: {stats['rows']}, "
+                f"Translated cells: {stats['translated_cells']}, "
                 f"Skipped invalid sources: {stats['skipped_source_invalid']}, Errors: {stats['errors']}"
                 + (f", Preserved existing: {stats['skipped_existing']}" if not overwrite_existing else ""))
 
             summary["files"] += 1
+            if file_status == "success":
+                summary["successful_files"] += 1
+            else:
+                summary["partial_files"] += 1
             summary["rows"] += stats["rows"]
             summary["translated_cells"] += stats["translated_cells"]
             summary["skipped_existing"] += stats["skipped_existing"]
             summary["skipped_source_invalid"] += stats["skipped_source_invalid"]
             summary["errors"] += stats["errors"]
+            summary["failed_cells"].extend(failed_cells)
+            summary["file_results"].append(file_result)
         except Exception as e:
-            log(f" - Failed to process: {safe_error_message(e, api_key)}")
-            summary["errors"] += 1
+            safe_error = safe_error_message(e, api_key)
+            failed_cells = (
+                [{"file": filename, **failure} for failure in stats["failed_cells"]]
+                if stats else []
+            )
+            log(f" - Status: FAILED; no output committed: {safe_error}")
+            summary["failed_files"] += 1
+            summary["errors"] += (stats["errors"] if stats else 0) + 1
+            summary["failed_cells"].extend(failed_cells)
+            summary["file_results"].append(
+                {
+                    "file": filename,
+                    "status": "failed",
+                    "rows": stats["rows"] if stats else 0,
+                    "translated_cells": 0,
+                    "errors": (stats["errors"] if stats else 0) + 1,
+                    "failed_cells": failed_cells,
+                    "error": safe_error,
+                }
+            )
+
+    if summary["failed_files"] == 0 and summary["partial_files"] == 0:
+        summary["status"] = "success"
+    elif summary["files"] > 0:
+        summary["status"] = "partial"
+    else:
+        summary["status"] = "failed"
+
+    if summary["failed_cells"]:
+        log(f"Failed cells ({len(summary['failed_cells'])}):")
+        for failure in summary["failed_cells"][:FAILURE_LOG_LIMIT]:
+            log(
+                f" - {failure['file']}: row {failure['row']}, "
+                f"column '{failure['column']}' ({failure['target_lang']}): "
+                f"{failure['error']}"
+            )
+        remaining_failures = len(summary["failed_cells"]) - FAILURE_LOG_LIMIT
+        if remaining_failures > 0:
+            log(f" - ... {remaining_failures} additional failed cell(s) are in the returned report.")
 
     log("All processing completed.")
-    log(f"Files: {summary['files']}, Total rows: {summary['rows']}, "
+    log(f"Status: {summary['status'].upper()}; Files committed: {summary['files']}, "
+        f"Successful: {summary['successful_files']}, Partial: {summary['partial_files']}, "
+        f"Failed: {summary['failed_files']}, Total rows: {summary['rows']}, "
         f"Translated cells: {summary['translated_cells']}, Errors: {summary['errors']}")
     if not overwrite_existing:
         log(f"Preserved existing cells count: {summary['skipped_existing']}")

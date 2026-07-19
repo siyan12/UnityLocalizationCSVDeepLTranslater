@@ -25,6 +25,7 @@ from tkinter.scrolledtext import ScrolledText
 
 from translator_core import (
     ensure_directories,
+    safe_error_message,
     test_api_key,
     run_translation_for_folder,
 )
@@ -182,11 +183,14 @@ class GuiApp(tk.Tk):
                     logger=lambda m: self.log_queue.put(m),
                 )
                 self.log_queue.put(
-                    f"Summary: files {summary['files']}, rows {summary['rows']}, "
+                    f"Summary: status {summary['status']}, committed files {summary['files']}, "
                     f"translated cells {summary['translated_cells']}, errors {summary['errors']}."
                 )
+                self.log_queue.put(("__TRANSLATION_RESULT__", summary))
             except Exception as e:
-                self.log_queue.put(f"任务失败：{e}")
+                safe_error = safe_error_message(e, key)
+                self.log_queue.put(f"Task failed: {safe_error}")
+                self.log_queue.put(("__TRANSLATION_FATAL__", safe_error))
             finally:
                 self.log_queue.put("__ENABLE__")
 
@@ -222,7 +226,33 @@ class GuiApp(tk.Tk):
         try:
             while True:
                 msg = self.log_queue.get_nowait()
-                if msg == "__ENABLE__":
+                if isinstance(msg, tuple) and msg[0] == "__TRANSLATION_RESULT__":
+                    summary = msg[1]
+                    status = summary["status"]
+                    if status == "success":
+                        messagebox.showinfo(
+                            "Translation Complete",
+                            f"All {summary['successful_files']} file(s) completed successfully.\n"
+                            f"Translated cells: {summary['translated_cells']}.",
+                        )
+                    elif status == "partial":
+                        messagebox.showwarning(
+                            "Translation Partially Complete",
+                            f"Committed files: {summary['files']} "
+                            f"(partial: {summary['partial_files']}); "
+                            f"failed files: {summary['failed_files']}.\n"
+                            f"Failed cells: {len(summary['failed_cells'])}. "
+                            "Their previous values were preserved. See the log for details.",
+                        )
+                    else:
+                        messagebox.showerror(
+                            "Translation Failed",
+                            "No new output files were committed. Existing outputs were not overwritten. "
+                            "See the log for details.",
+                        )
+                elif isinstance(msg, tuple) and msg[0] == "__TRANSLATION_FATAL__":
+                    messagebox.showerror("Translation Failed", f"Task failed: {msg[1]}")
+                elif msg == "__ENABLE__":
                     self._disable_controls(False)
                 elif msg == "__ALERT_OK__":
                     messagebox.showinfo("API Test", "API Key is valid, connected successfully.")
