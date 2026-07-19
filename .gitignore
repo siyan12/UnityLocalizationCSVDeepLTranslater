@@ -4,11 +4,16 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.egg-info/
 
 # PyInstaller
 *.spec
+!CSVTranslator.spec
 build/
 dist/
+release-assets/
+*.exe
+/CSVtranslator-run/
 
 # IDE / Editor specific
 .idea/

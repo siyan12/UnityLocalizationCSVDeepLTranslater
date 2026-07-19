@@ -1,0 +1,6 @@
+Key,Id,Shared Comments,English(en),German(de),Japanese(ja)
+MENU_PLAY,1001,"Button label, safe demo text",Play,,
+WELCOME_PLAYER,1002,Preserve placeholders and rich text,"Welcome, <b>{playerName}</b>!",,
+MULTILINE_HINT,1003,Preserve commas quotes and line breaks,"Press ""Jump"", then
+move left.",Bereits übersetzt,
+DOCS_LINK,1004,URLs are intentionally skipped,https://example.invalid/help,,

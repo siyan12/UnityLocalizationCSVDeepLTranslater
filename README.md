@@ -30,22 +30,23 @@ Use deepL API to translate CSV table that outputed from Unity Localization.
 -   **任务内缓存**：同一次任务会跨文件复用相同源文本与目标语言的译文；缓存仅保存在内存中，任务结束即清除，不会把本地化内容持久化到磁盘。
 -   **安全配置**：DeepL API Key 保存到操作系统凭据库，不写入项目或 `config.ini`。
 -   **源码平台**：Python 3.10+ 源码面向 Windows、macOS 和 Linux，需要 Tkinter 与可用的系统凭据库后端。自动测试在 Windows 和 Linux 上运行；macOS 尚未纳入 CI 验证。
--   **预编译包平台**：Releases 目前仅提供 Windows `CSVTranslator.exe`，macOS 和 Linux 用户请从源码运行。
+-   **预编译包平台**：从 v1.3.0 起，发布工作流将生成版本化的 Windows x64 EXE 和 SHA-256 校验文件；macOS 和 Linux 用户请从源码运行。
 
 ---
 
 ## 🚀 快速开始 (普通用户)
 
-1.  **下载与解压**
+1.  **下载与校验**
     -   前往本项目的 [Releases 页面](https://github.com/siyan12/UnityLocalizationCSVDeepLTranslater/releases)。
-    -   下载最新的 `CSVTranslator-vX.X.X.zip` 压缩包并解压。
+    -   下载最新的 `CSVTranslator-vX.X.X-windows-x64.exe` 及同名 `.sha256` 文件，并按 Release 页面说明核对 SHA-256。
+    -   Windows PowerShell 可运行 `Get-FileHash .\CSVTranslator-vX.X.X-windows-x64.exe -Algorithm SHA256`，将结果与 `.sha256` 文件中的哈希比较。
 
 2.  **准备文件**
     -   首次启动后，界面会显示用户数据目录中的 `input` 和 `output` 完整路径。
     -   将从 Unity 导出的 `.csv` 文件放入该 `input` 文件夹。
 
 3.  **运行与翻译**
-    -   双击运行 `CSVTranslator.exe`。
+    -   双击运行下载的版本化 EXE。
     -   在程序界面的 **API Key 输入框**中填入 Key，然后点击 **Save API Key**；Key 会保存到操作系统凭据库。
     -   当前版本固定从 `English(en)` 翻译，并自动填充文件中检测到的受支持目标语言列；点击“开始翻译”。
     -   程序会先显示本次任务的预计翻译字符数和目标语言数量；确认后才会调用 DeepL。
@@ -97,11 +98,19 @@ python -m py_compile translator_core.py gui_app.py app_storage.py
 使用 PyInstaller 构建当前平台的可执行文件：
 
 ```bash
-python -m pip install pyinstaller
-python -m PyInstaller --noconsole --onefile --name CSVTranslator gui_app.py
+python -m pip install ".[build]"
+python -m PyInstaller --clean --noconfirm CSVTranslator.spec
 ```
 
 构建结果位于 `dist` 目录。PyInstaller 不是交叉编译器；用于发布的 Windows 可执行文件应在 Windows 上构建并测试。
+
+发布前还应运行不联网的公开示例 CSV 往返检查：
+
+```bash
+python scripts/offline_release_smoke.py
+```
+
+推送与 `app_version.py` 一致的 `vX.Y.Z` tag 后，发布工作流会在干净的 Windows runner 上重复上述检查和构建，选择性使用仓库签名 secrets 进行 Authenticode 签名，再为最终 EXE 生成 `.sha256` 并创建 GitHub Release。未配置签名证书时产物不会声称已签名。
 
 ---
 
@@ -173,22 +182,23 @@ There might be some undiscovered bugs or oversights. I would be very grateful if
 -   **Task-local Cache**: Reuse translations for the same source-text/target-language pair across files in one task. The cache is memory-only, cleared when the task ends, and never persists localization content to disk.
 -   **Secure Configuration**: The DeepL API Key is stored in the operating system credential store, never in the project or `config.ini`.
 -   **Source Platforms**: The Python 3.10+ source targets Windows, macOS, and Linux with Tkinter and a working system credential-store backend. Automated tests run on Windows and Linux; macOS is not currently covered by CI.
--   **Prebuilt Package Platforms**: Releases currently provide only the Windows `CSVTranslator.exe`; macOS and Linux users should run from source.
+-   **Prebuilt Package Platforms**: Starting with v1.3.0, the release workflow will produce a versioned Windows x64 executable and SHA-256 checksum; macOS and Linux users should run from source.
 
 ---
 
 ## 🚀 Quick Start (For Users)
 
-1.  **Download and Unzip**
+1.  **Download and Verify**
     -   Go to the [Releases page](https://github.com/siyan12/UnityLocalizationCSVDeepLTranslater/releases) of this project.
-    -   Download and unzip the latest `CSVTranslator-vX.X.X.zip` archive.
+    -   Download the latest `CSVTranslator-vX.X.X-windows-x64.exe` and its matching `.sha256` file, then verify SHA-256 as described on the Release page.
+    -   In Windows PowerShell, run `Get-FileHash .\CSVTranslator-vX.X.X-windows-x64.exe -Algorithm SHA256` and compare it with the hash in the `.sha256` file.
 
 2.  **Prepare Files**
     -   After the first launch, the UI displays the full paths of the `input` and `output` folders in the user data directory.
     -   Place the `.csv` file exported from Unity into that `input` folder.
 
 3.  **Run and Translate**
-    -   Double-click `CSVTranslator.exe` to run it.
+    -   Double-click the downloaded versioned executable.
     -   Enter your DeepL API Key in the UI and click **Save API Key**. It is saved in the operating system credential store.
     -   This version always translates from `English(en)` and automatically fills the supported target-language columns detected in the file. Click "Start Translation."
     -   The application first shows the estimated number of characters to translate and the number of target languages. DeepL is called only after you confirm.
@@ -242,12 +252,20 @@ python -m py_compile translator_core.py gui_app.py app_storage.py
 Build an executable for the current platform with PyInstaller:
 
 ```bash
-python -m pip install pyinstaller
-python -m PyInstaller --noconsole --onefile --name CSVTranslator gui_app.py
+python -m pip install ".[build]"
+python -m PyInstaller --clean --noconfirm CSVTranslator.spec
 ```
 
 The result is written to `dist`. PyInstaller is not a cross-compiler; build and test
 a release Windows executable on Windows.
+
+Before release, also run the public sample CSV round-trip check, which never contacts DeepL:
+
+```bash
+python scripts/offline_release_smoke.py
+```
+
+Pushing a `vX.Y.Z` tag that matches `app_version.py` makes the release workflow repeat these checks and the build on a clean Windows runner, optionally apply Authenticode when repository signing secrets are configured, generate a `.sha256` for the final executable, and create the GitHub Release. An unsigned build is never presented as signed when no certificate is configured.
 
 ---
 

@@ -6,6 +6,8 @@ All notable changes are documented here. This format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-07-19
+
 ### Added
 
 - Operating-system credential storage for DeepL API keys.
@@ -31,5 +33,6 @@ All notable changes are documented here. This format follows [Keep a Changelog](
 
 - Initial public release.
 
-[Unreleased]: https://github.com/siyan12/UnityLocalizationCSVDeepLTranslater/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/siyan12/UnityLocalizationCSVDeepLTranslater/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/siyan12/UnityLocalizationCSVDeepLTranslater/compare/v1.0.0...v1.3.0
 [1.0.0]: https://github.com/siyan12/UnityLocalizationCSVDeepLTranslater/releases/tag/v1.0.0

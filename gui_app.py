@@ -13,7 +13,7 @@ Tkinter 图形界面：管理 API Key、测试 API、批量翻译用户数据目
 
 打包为 exe（可选）：
   pip install pyinstaller
-  pyinstaller --noconsole --onefile --name CSVTranslator gui_app.py
+  pyinstaller --clean --noconfirm CSVTranslator.spec
 """
 
 import threading
@@ -23,6 +23,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from tkinter.scrolledtext import ScrolledText
 
+from app_version import __version__
 from translator_core import (
     TranslationCancelled,
     ensure_directories,
@@ -40,7 +41,7 @@ from app_storage import (
     verify_credential_store,
 )
 
-APP_TITLE = "CSV Batch Translator v1.1"
+APP_TITLE = f"CSV Batch Translator v{__version__}"
 INPUT_DIR = get_input_dir()
 OUTPUT_DIR = get_output_dir()
 

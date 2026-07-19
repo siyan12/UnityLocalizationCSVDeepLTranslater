@@ -1,0 +1,138 @@
+name: Release Windows executable
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+
+      - name: Verify tag and version consistency
+        id: version
+        shell: pwsh
+        run: |
+          $version = python scripts/verify_release_version.py --tag $env:GITHUB_REF_NAME
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Install build and test dependencies
+        run: python -m pip install ".[dev,build]"
+
+      - name: Compile source
+        run: python -m py_compile translator_core.py gui_app.py app_storage.py app_version.py
+
+      - name: Run complete offline test suite
+        run: python -m pytest -q
+
+      - name: Run public sample round-trip smoke test
+        run: python scripts/offline_release_smoke.py
+
+      - name: Reject committed credentials
+        run: python scripts/check_secrets.py
+
+      - name: Build from the committed PyInstaller spec
+        run: python -m PyInstaller --clean --noconfirm CSVTranslator.spec
+
+      - name: Upload unsigned build for the isolated release job
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-windows-executable
+          path: dist/CSVTranslator-${{ steps.version.outputs.version }}.exe
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    needs: build
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download the isolated build
+        uses: actions/download-artifact@v4
+        with:
+          name: unsigned-windows-executable
+          path: release-assets
+
+      - name: Name the versioned release asset
+        id: asset
+        shell: pwsh
+        run: |
+          $assetName = "CSVTranslator-v${{ needs.build.outputs.version }}-windows-x64.exe"
+          Move-Item -LiteralPath "release-assets/CSVTranslator-${{ needs.build.outputs.version }}.exe" `
+            -Destination "release-assets/$assetName"
+          "name=$assetName" >> $env:GITHUB_OUTPUT
+
+      - name: Sign executable when signing secrets are configured
+        shell: pwsh
+        env:
+          SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $asset = "release-assets/${{ steps.asset.outputs.name }}"
+          $hasCertificate = -not [string]::IsNullOrWhiteSpace($env:SIGNING_CERTIFICATE_BASE64)
+          $hasPassword = -not [string]::IsNullOrWhiteSpace($env:SIGNING_CERTIFICATE_PASSWORD)
+          if ($hasCertificate -xor $hasPassword) {
+            throw "Both Authenticode signing secrets must be configured together."
+          }
+          if (-not $hasCertificate) {
+            "::notice::Authenticode signing skipped: optional signing secrets are not configured."
+            exit 0
+          }
+          $certificate = Join-Path $env:RUNNER_TEMP "release-signing.pfx"
+          try {
+            [IO.File]::WriteAllBytes(
+              $certificate,
+              [Convert]::FromBase64String($env:SIGNING_CERTIFICATE_BASE64)
+            )
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+              Sort-Object FullName -Descending |
+              Select-Object -First 1
+            if (-not $signtool) { throw "signtool.exe was not found on the runner." }
+            & $signtool.FullName sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com `
+              /f $certificate /p $env:SIGNING_CERTIFICATE_PASSWORD $asset
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & $signtool.FullName verify /pa /v $asset
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          finally {
+            Remove-Item -LiteralPath $certificate -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Generate SHA-256 checksum
+        shell: pwsh
+        run: |
+          $assetName = "${{ steps.asset.outputs.name }}"
+          $hash = (Get-FileHash "release-assets/$assetName" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash *$assetName" | Set-Content "release-assets/$assetName.sha256" -Encoding ascii
+
+      - name: Create GitHub Release and upload assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME `
+            "release-assets/${{ steps.asset.outputs.name }}" `
+            "release-assets/${{ steps.asset.outputs.name }}.sha256" `
+            --verify-tag `
+            --title "CSV Translator $env:GITHUB_REF_NAME" `
+            --generate-notes
