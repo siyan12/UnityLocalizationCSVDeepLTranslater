@@ -1,0 +1,62 @@
+name: Bug report / Bug 报告
+description: Report a reproducible problem without secrets or private localization text.
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: "请先移除 API Key 和机密本地化文本。Remove API keys and confidential localization text before submitting."
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit / 版本或提交
+      placeholder: v1.3.0 or commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installation / 安装方式
+      options:
+        - Windows release executable
+        - Python source
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment / 环境
+      description: OS, Python version, and Unity Localization version if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Sanitized reproduction / 脱敏复现步骤
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior / 预期行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and sanitized logs / 实际行为与脱敏日志
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: Minimal sanitized CSV / 最小脱敏 CSV
+      description: Optional. Use invented text only.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks / 确认
+      options:
+        - label: I searched existing issues and reproduced this on the latest version. / 我已查重并在最新版复现。
+          required: true
+        - label: This report contains no API key, credential, user CSV, or confidential text. / 报告不含密钥、凭据、用户 CSV 或机密文本。
+          required: true

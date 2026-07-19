@@ -1,0 +1,33 @@
+name: Feature request / 功能请求
+description: Suggest an improvement or new workflow.
+title: "[Feature] "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and use case / 问题与使用场景
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Desired behavior / 期望行为
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered / 考虑过的替代方案
+  - type: textarea
+    id: impact
+    attributes:
+      label: Data integrity, privacy, and compatibility impact / 数据完整性、隐私与兼容性影响
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks / 确认
+      options:
+        - label: I searched existing issues for the same request. / 我已搜索相同请求。
+          required: true
+        - label: This request contains no secrets or confidential localization text. / 请求不含秘密或机密本地化文本。
+          required: true

@@ -159,10 +159,10 @@
 
 #### 4.3 社区健康文件
 
-- [ ] 添加 `CONTRIBUTING.md`。
-- [ ] 添加 `SECURITY.md`，说明密钥或漏洞的非公开报告方式。
-- [ ] 添加 Bug/功能请求模板和 PR 模板。
-- [ ] 添加 `CHANGELOG.md`。
+- [x] 添加 `CONTRIBUTING.md`。
+- [x] 添加 `SECURITY.md`，说明密钥或漏洞的非公开报告方式。
+- [x] 添加 Bug/功能请求模板和 PR 模板。
+- [x] 添加 `CHANGELOG.md`。
 
 ### 阶段 5：可复现发布
 
