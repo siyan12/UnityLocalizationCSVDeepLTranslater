@@ -19,7 +19,6 @@ translator_core.py
 import os
 import re
 import csv
-import time
 import tempfile
 import warnings
 from collections import Counter
@@ -91,6 +90,7 @@ VOID_TAG_NAMES = {"br", "sprite", "space", "quad", "page", "img", "hr"}
 TOKEN_PREFIX_TEMPLATE = "__UL10N{generation}_PH_"
 TOKEN_SUFFIX = "__"
 FAILURE_LOG_LIMIT = 100
+FATAL_PROVIDER_CATEGORIES = {"authentication", "quota", "invalid_request"}
 
 Logger = Callable[[str], None]
 
@@ -118,9 +118,8 @@ def _safe_cell_error_message(error: BaseException) -> str:
     """Return only controlled messages; arbitrary exceptions may echo private cell text."""
     if isinstance(error, StructureValidationError):
         return safe_error_message(error)
-    message = str(error)
-    if isinstance(error, RuntimeError) and message.startswith("Translation failed after "):
-        return message
+    if isinstance(error, TranslationProviderError):
+        return str(error)
     return f"Cell processing failed ({error.__class__.__name__})."
 
 
@@ -130,6 +129,21 @@ class StructureValidationError(ValueError):
 
 class CsvSchemaError(ValueError):
     """The input CSV cannot be processed without risking structural data loss."""
+
+
+class TranslationProviderError(RuntimeError):
+    """A provider failure expressed as a safe, actionable user message."""
+
+    def __init__(self, message: str, category: str):
+        super().__init__(message)
+        self.category = category
+
+
+@dataclass(frozen=True)
+class ProviderErrorClassification:
+    category: str
+    retryable: bool
+    user_message: str
 
 
 @dataclass(frozen=True)
@@ -584,32 +598,103 @@ def validate_translated_structure(source: str, translated: str) -> None:
         raise StructureValidationError("Translation changed line-break structure.")
 
 
+def _exception_status_code(error: BaseException) -> Optional[int]:
+    for name in ("http_status_code", "status_code", "status"):
+        value = getattr(error, name, None)
+        if isinstance(value, int):
+            return value
+    response = getattr(error, "response", None)
+    value = getattr(response, "status_code", None)
+    return value if isinstance(value, int) else None
+
+
+def classify_provider_error(error: BaseException) -> ProviderErrorClassification:
+    """Classify provider failures without exposing provider messages or cell text."""
+    name = error.__class__.__name__.lower()
+    status = _exception_status_code(error)
+
+    if "authorization" in name or "authentication" in name or status in (401, 403):
+        return ProviderErrorClassification(
+            "authentication",
+            False,
+            "DeepL authentication failed. Check or replace the API Key.",
+        )
+    if "quota" in name or status == 456:
+        return ProviderErrorClassification(
+            "quota",
+            False,
+            "DeepL quota is exhausted. Check account usage or cost-control limits.",
+        )
+    if "toomanyrequests" in name or "rate" in name or status == 429:
+        return ProviderErrorClassification(
+            "rate_limit",
+            True,
+            "DeepL remained rate-limited after automatic retries. Wait and try again.",
+        )
+    if (
+        isinstance(error, (TimeoutError, ConnectionError))
+        or "timeout" in name
+        or "connection" in name
+    ):
+        retryable = getattr(error, "should_retry", True) is not False
+        return ProviderErrorClassification(
+            "network",
+            retryable,
+            (
+                "A temporary network error persisted. Check the connection and try again."
+                if retryable
+                else "The network request failed. Check proxy, TLS, and connection settings."
+            ),
+        )
+    if status is not None and status >= 500:
+        return ProviderErrorClassification(
+            "service",
+            True,
+            "DeepL remained unavailable after automatic retries. Try again later.",
+        )
+    if getattr(error, "should_retry", False) is True:
+        return ProviderErrorClassification(
+            "service",
+            True,
+            "DeepL remained unavailable after automatic retries. Try again later.",
+        )
+    if isinstance(error, (TypeError, ValueError)) or (
+        status is not None and 400 <= status < 500
+    ):
+        return ProviderErrorClassification(
+            "invalid_request",
+            False,
+            "DeepL rejected the request parameters. Check language columns and settings.",
+        )
+    return ProviderErrorClassification(
+        "unexpected",
+        False,
+        f"Unexpected translation provider error ({error.__class__.__name__}).",
+    )
+
+
 def translate_text(
     translator: Any,
     text: str,
     target_lang: str,
-    max_retries: int = 5,
-    base_delay: float = 0.8,
 ) -> str:
-    last_error_type = "UnknownError"
-    for attempt in range(max_retries):
-        try:
-            result = translator.translate_text(
-                text,
-                target_lang=target_lang,
-                source_lang="EN",
-                preserve_formatting=True,
-                split_sentences="nonewlines",
-                formality="default",
-            )
-            return result.text if hasattr(result, "text") else str(result)
-        except Exception as e:
-            # Provider messages may echo request content; report only the class here.
-            last_error_type = e.__class__.__name__
-            time.sleep(base_delay * (2 ** attempt))
-    raise RuntimeError(
-        f"Translation failed after {max_retries} retries ({last_error_type})."
-    )
+    """Translate once; the official DeepL SDK owns transient HTTP retries."""
+    try:
+        result = translator.translate_text(
+            text,
+            target_lang=target_lang,
+            source_lang="EN",
+            preserve_formatting=True,
+            split_sentences="nonewlines",
+            formality="default",
+        )
+        return result.text if hasattr(result, "text") else str(result)
+    except Exception as error:
+        classification = classify_provider_error(error)
+        raise TranslationProviderError(
+            classification.user_message,
+            classification.category,
+        ) from error
 
 
 def should_fill_cell(current_value: Any, preserve_existing: bool) -> bool:
@@ -706,6 +791,11 @@ def process_rows(
                 if logger:
                     logger(f"  -> Filled '{header}'")
             except Exception as e:
+                if (
+                    isinstance(e, TranslationProviderError)
+                    and e.category in FATAL_PROVIDER_CATEGORIES
+                ):
+                    raise
                 safe_error = _safe_cell_error_message(e)
                 stats["errors"] += 1
                 stats["failed_cells"].append(
@@ -741,11 +831,9 @@ def test_api_key(api_key: str) -> Tuple[bool, str]:
         res = translator.translate_text("Hello", target_lang="DE")
         ok = hasattr(res, "text")
         return (True, "API Key is valid, successfully connected to DeepL.") if ok else (False, "API connection issue.")
-    except Exception as e:
-        name = e.__class__.__name__
-        if name in ("AuthorizationError", "AuthorizationException"):
-            return False, "API Key invalid or authentication failed."
-        return False, f"Unknown error: {safe_error_message(e, api_key)}"
+    except Exception as error:
+        classification = classify_provider_error(error)
+        return False, classification.user_message
 
 
 def run_translation_for_folder(
@@ -794,6 +882,8 @@ def run_translation_for_folder(
         "errors": 0,
         "failed_cells": [],
         "file_results": [],
+        "provider_error_category": None,
+        "fatal_error": "",
     }
 
     if not all_files:
@@ -882,7 +972,12 @@ def run_translation_for_folder(
             summary["failed_cells"].extend(failed_cells)
             summary["file_results"].append(file_result)
         except Exception as e:
-            safe_error = safe_error_message(e, api_key)
+            provider_error = e if isinstance(e, TranslationProviderError) else None
+            safe_error = (
+                str(provider_error)
+                if provider_error
+                else safe_error_message(e, api_key)
+            )
             failed_cells = (
                 [{"file": filename, **failure} for failure in stats["failed_cells"]]
                 if stats else []
@@ -891,17 +986,26 @@ def run_translation_for_folder(
             summary["failed_files"] += 1
             summary["errors"] += (stats["errors"] if stats else 0) + 1
             summary["failed_cells"].extend(failed_cells)
-            summary["file_results"].append(
-                {
-                    "file": filename,
-                    "status": "failed",
-                    "rows": stats["rows"] if stats else 0,
-                    "translated_cells": 0,
-                    "errors": (stats["errors"] if stats else 0) + 1,
-                    "failed_cells": failed_cells,
-                    "error": safe_error,
-                }
-            )
+            file_result = {
+                "file": filename,
+                "status": "failed",
+                "rows": stats["rows"] if stats else 0,
+                "translated_cells": 0,
+                "errors": (stats["errors"] if stats else 0) + 1,
+                "failed_cells": failed_cells,
+                "error": safe_error,
+            }
+            if provider_error:
+                file_result["provider_error_category"] = provider_error.category
+            summary["file_results"].append(file_result)
+            if (
+                provider_error
+                and provider_error.category in FATAL_PROVIDER_CATEGORIES
+            ):
+                summary["provider_error_category"] = provider_error.category
+                summary["fatal_error"] = safe_error
+                log("Batch stopped because this provider error cannot succeed on retry.")
+                break
 
     if summary["failed_files"] == 0 and summary["partial_files"] == 0:
         summary["status"] = "success"

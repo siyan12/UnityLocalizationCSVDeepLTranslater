@@ -75,6 +75,7 @@ Use deepL API to translate CSV table that outputed from Unity Localization.
 -   **失败清单**：日志会列出失败单元格的文件名、CSV 行号、目标列、目标语言和安全错误信息，不包含源文、译文或 API Key，便于定位并重试。
 -   **Unity 兼容范围**：自动测试以 Unity Localization 1.4 文档给出的 `Key,Id,Locale...` 与 CSV (With Comments) 结构为基准，并支持仅含 `Key` 或 `Id` 的合法变体。自定义列会保留；但自定义 Locale Field Name 无法自动识别为语言列，其他包版本也尚未做 Unity Editor 端到端验证。
 -   **结构保护**：工具会保留 .NET/Python/printf 占位符、Unity Smart String、ICU、富文本标签与换行；如果译文结构不同，该单元格会保留原值并报告失败。当前嵌套 Smart String/ICU 会整段保护，因此表达式内部的分支文案不会翻译。
+-   **重试与错误分类**：网络暂时故障、DeepL 服务器错误和限流由官方 DeepL SDK 按指数退避自动重试，应用不会叠加第二层重试或在最终失败后继续休眠。认证、请求参数和额度错误不会重试，并会停止批次；界面显示不含源文或密钥的可操作提示。
 
 ## 🧪 离线测试
 
@@ -169,6 +170,7 @@ and `output` CSV folders; the API Key is not stored there.
 -   **Failure list**: The log identifies failed cells by filename, CSV row, target column, target language, and a safe error message. It never includes source text, translated text, or the API Key, making failures safe to locate and retry.
 -   **Unity compatibility scope**: Automated tests use the `Key,Id,Locale...` and CSV (With Comments) structures documented for Unity Localization 1.4, including valid variants with only `Key` or `Id`. Custom columns are preserved, but custom Locale Field Names cannot be identified automatically as language columns, and other package versions have not been verified end-to-end in the Unity Editor.
 -   **Structure protection**: The tool preserves .NET/Python/printf placeholders, Unity Smart Strings, ICU expressions, rich-text tags, and line breaks. If translated structure differs, the original target cell is kept and the failure is reported. Nested Smart String/ICU expressions are currently protected as a whole, so branch text inside them is not translated.
+-   **Retries and error categories**: The official DeepL SDK retries temporary network failures, server errors, and rate limits with exponential backoff. The app does not add another retry layer or sleep after the terminal failure. Authentication, invalid-request, and quota errors are not retried and stop the batch; the UI shows an actionable message without source text or credentials.
 
 ## 🧪 Offline Tests
 

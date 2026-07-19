@@ -109,7 +109,6 @@ def test_provider_error_report_does_not_echo_localization_text(monkeypatch):
         raise RuntimeError(f"provider rejected: {text[:12]} using {api_key_text}")
 
     client = FakeDeepLClient(fail_with_echo)
-    monkeypatch.setattr(translator_core.time, "sleep", lambda seconds: None)
 
     _, stats = translator_core.process_rows(
         [{"English(en)": sensitive_text, "German(de)": ""}],

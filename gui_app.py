@@ -157,7 +157,7 @@ class GuiApp(tk.Tk):
             success, msg = test_api_key(key)
             self.log_queue.put(msg)
             self.log_queue.put("__ENABLE__")
-            self.log_queue.put("__ALERT_OK__" if success else "__ALERT_FAIL__")
+            self.log_queue.put(("__API_TEST_RESULT__", success, msg))
         threading.Thread(target=run, daemon=True).start()
 
     def _on_start(self):
@@ -236,28 +236,40 @@ class GuiApp(tk.Tk):
                             f"Translated cells: {summary['translated_cells']}.",
                         )
                     elif status == "partial":
+                        fatal_detail = (
+                            f"\n\n{summary['fatal_error']}"
+                            if summary.get("fatal_error")
+                            else ""
+                        )
                         messagebox.showwarning(
                             "Translation Partially Complete",
                             f"Committed files: {summary['files']} "
                             f"(partial: {summary['partial_files']}); "
                             f"failed files: {summary['failed_files']}.\n"
                             f"Failed cells: {len(summary['failed_cells'])}. "
-                            "Their previous values were preserved. See the log for details.",
+                            "Their previous values were preserved. See the log for details."
+                            + fatal_detail,
                         )
                     else:
+                        fatal_detail = (
+                            f"\n\n{summary['fatal_error']}"
+                            if summary.get("fatal_error")
+                            else ""
+                        )
                         messagebox.showerror(
                             "Translation Failed",
                             "No new output files were committed. Existing outputs were not overwritten. "
-                            "See the log for details.",
+                            "See the log for details." + fatal_detail,
                         )
                 elif isinstance(msg, tuple) and msg[0] == "__TRANSLATION_FATAL__":
                     messagebox.showerror("Translation Failed", f"Task failed: {msg[1]}")
+                elif isinstance(msg, tuple) and msg[0] == "__API_TEST_RESULT__":
+                    if msg[1]:
+                        messagebox.showinfo("API Test", msg[2])
+                    else:
+                        messagebox.showerror("API Test", msg[2])
                 elif msg == "__ENABLE__":
                     self._disable_controls(False)
-                elif msg == "__ALERT_OK__":
-                    messagebox.showinfo("API Test", "API Key is valid, connected successfully.")
-                elif msg == "__ALERT_FAIL__":
-                    messagebox.showerror("API Test", "API Key invalid or connection failed.")
                 else:
                     self._log(msg)
         except queue.Empty:
