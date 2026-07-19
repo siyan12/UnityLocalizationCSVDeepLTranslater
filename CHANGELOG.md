@@ -6,6 +6,11 @@ All notable changes are documented here. This format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+### Changed
+
+- Refreshed the README screenshot to show the current v1.3.0 interface without API keys or localization text.
+- Aligned local, pull-request, and CI syntax checks with the single-source `app_version.py` version module.
+
 ## [1.3.0] - 2026-07-19
 
 ### Added

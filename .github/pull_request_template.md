@@ -6,7 +6,7 @@
 
 ## Test plan / 验证
 
-- [ ] `python -m py_compile translator_core.py gui_app.py app_storage.py`
+- [ ] `python -m py_compile translator_core.py gui_app.py app_storage.py app_version.py`
 - [ ] `python -m pytest -q`
 - [ ] `python scripts/check_secrets.py`
 - [ ] Tests make no real or billable API requests.
