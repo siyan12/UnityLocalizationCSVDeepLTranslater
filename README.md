@@ -110,7 +110,9 @@ python -m PyInstaller --clean --noconfirm CSVTranslator.spec
 python scripts/offline_release_smoke.py
 ```
 
-推送与 `app_version.py` 一致的 `vX.Y.Z` tag 后，发布工作流会在干净的 Windows runner 上重复上述检查和构建，选择性使用仓库签名 secrets 进行 Authenticode 签名，再为最终 EXE 生成 `.sha256` 并创建 GitHub Release。未配置签名证书时产物不会声称已签名。
+推送与 `app_version.py` 一致、且指向 `main` 历史的 `vX.Y.Z` tag 后，发布工作流会使用 `requirements-release.lock`、固定 Python 版本和固定 Action 提交重复上述检查，构建并自检 Windows EXE。`release` GitHub Environment 应配置必需审批人，并保存可选的 Authenticode 签名 secrets；未配置证书时产物不会声称已签名。工作流先创建草稿、上传并核对 EXE 与 `.sha256`；第二个受保护的发布 job 获批后才公开 Release，失败后可安全重跑。发布前按 [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) 完成人工验收。
+
+锁文件用于从同一 tag 进行功能一致的重建；GitHub Windows runner 镜像、PE 元数据和 Authenticode 时间戳仍可能使不同时间构建的二进制哈希不同。发布的 `.sha256` 用于验证实际下载产物，不是跨构建可重复性承诺。
 
 ---
 
@@ -265,7 +267,9 @@ Before release, also run the public sample CSV round-trip check, which never con
 python scripts/offline_release_smoke.py
 ```
 
-Pushing a `vX.Y.Z` tag that matches `app_version.py` makes the release workflow repeat these checks and the build on a clean Windows runner, optionally apply Authenticode when repository signing secrets are configured, generate a `.sha256` for the final executable, and create the GitHub Release. An unsigned build is never presented as signed when no certificate is configured.
+Pushing a `vX.Y.Z` tag that matches `app_version.py` and belongs to `main` makes the release workflow repeat these checks with `requirements-release.lock`, a pinned Python version, and Actions pinned to exact commits, then build and runtime-check the Windows executable. The `release` GitHub Environment should require reviewers and hold the optional Authenticode signing secrets; an unsigned build is never presented as signed. The workflow creates a draft first and verifies both the EXE and `.sha256`; a second protected publish job makes it public only after approval, so a failed run can be resumed safely. Complete [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) before publishing.
+
+The lock file supports a functionally equivalent rebuild from the same tag. Updates to the hosted Windows runner, PE metadata, and Authenticode timestamps may still produce different binary hashes across build dates. The published `.sha256` verifies the actual download; it is not a promise of bit-for-bit reproducibility across separate builds.
 
 ---
 

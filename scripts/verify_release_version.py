@@ -16,9 +16,23 @@ except ModuleNotFoundError:  # Python 3.10
 ROOT = Path(__file__).resolve().parents[1]
 SEMVER_PATTERN = re.compile(
     r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
-    r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+    r"(?:-(?P<prerelease>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
+
+
+def is_valid_semver(version: str) -> bool:
+    """Return whether *version* follows SemVer 2.0.0 identifier rules."""
+    match = SEMVER_PATTERN.fullmatch(version)
+    if match is None:
+        return False
+    prerelease = match.group("prerelease")
+    if prerelease is None:
+        return True
+    return all(
+        not (identifier.isdigit() and len(identifier) > 1 and identifier.startswith("0"))
+        for identifier in prerelease.split(".")
+    )
 
 
 def load_version(root: Path = ROOT) -> str:
@@ -51,7 +65,7 @@ def verify_release_version(tag: str, root: Path = ROOT) -> str:
     if not tag.startswith("v"):
         raise ValueError(f"Release tag must start with 'v'; received {tag!r}.")
     tag_version = tag[1:]
-    if SEMVER_PATTERN.fullmatch(tag_version) is None:
+    if not is_valid_semver(tag_version):
         raise ValueError(f"Release tag is not valid SemVer: {tag!r}.")
 
     app_version = load_version(root)

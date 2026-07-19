@@ -10,6 +10,7 @@ All notable changes are documented here. This format follows [Keep a Changelog](
 
 - Refreshed the README screenshot to show the current v1.3.0 interface without API keys or localization text.
 - Aligned local, pull-request, and CI syntax checks with the single-source `app_version.py` version module.
+- Hardened release validation with strict SemVer checks, pinned Windows dependencies and Actions, `main` tag ancestry checks, frozen-executable smoke tests, and resumable draft publishing.
 
 ## [1.3.0] - 2026-07-19
 

@@ -23,6 +23,13 @@ python -m pytest -q
 python scripts/check_secrets.py
 ```
 
+修改运行、测试或构建依赖后，请用 `requirements-release.lock` 文件头记录的
+`uv pip compile` 命令重新生成 Windows 发布锁文件，并在 PR 中提交该变更。
+
+After changing runtime, test, or build dependencies, regenerate the Windows release
+lock with the `uv pip compile` command recorded at the top of
+`requirements-release.lock`, and include the result in the pull request.
+
 ## 项目规则 / Project rules
 
 - 测试必须使用 fake 或 mock DeepL client，绝不进行真实或计费 API 请求。
