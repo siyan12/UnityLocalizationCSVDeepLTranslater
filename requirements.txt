@@ -1,2 +1,2 @@
 deepl
-pandas
+keyring>=25,<26

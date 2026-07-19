@@ -3,8 +3,8 @@
 """
 gui_app.py
 
-Tkinter 图形界面：管理 API Key、测试 API、批量翻译 input 文件夹内的 CSV 到 output 文件夹。
-- 启动即确保 ./input 与 ./output 存在
+Tkinter 图形界面：管理 API Key、测试 API、批量翻译用户数据目录中的 CSV。
+- 启动即确保明确的用户数据 input 与 output 目录存在
 - 后台线程执行翻译，界面不冻结
 - 日志区域实时输出进度与错误
 
@@ -16,10 +16,9 @@ Tkinter 图形界面：管理 API Key、测试 API、批量翻译 input 文件�
   pyinstaller --noconsole --onefile --name CSVTranslator gui_app.py
 """
 
-import os
 import threading
 import queue
-import configparser
+import sys
 import tkinter as tk
 from tkinter import ttk, messagebox
 from tkinter.scrolledtext import ScrolledText
@@ -29,13 +28,18 @@ from translator_core import (
     test_api_key,
     run_translation_for_folder,
 )
+from app_storage import (
+    CredentialStoreError,
+    get_input_dir,
+    get_output_dir,
+    load_api_key,
+    save_api_key,
+    verify_credential_store,
+)
 
 APP_TITLE = "CSV Batch Translator v1.1"
-INPUT_DIR = "input"
-OUTPUT_DIR = "output"
-CONFIG_FILE = "config.ini"
-CONFIG_SECTION = "deepl"
-CONFIG_KEY = "api_key"
+INPUT_DIR = get_input_dir()
+OUTPUT_DIR = get_output_dir()
 
 
 class GuiApp(tk.Tk):
@@ -83,9 +87,9 @@ class GuiApp(tk.Tk):
         flow_frame = ttk.LabelFrame(self, text="Workflow")
         flow_frame.pack(fill=tk.X, **pad)
         steps = (
-            "1) Put CSV files into the 'input' folder in the app directory;\n"
+            f"1) Put CSV files into:\n   {INPUT_DIR}\n"
             "2) Click 'Start Batch Translation';\n"
-            "3) Translated results will be saved to the 'output' folder."
+            f"3) Translated results will be saved to:\n   {OUTPUT_DIR}"
         )
         ttk.Label(flow_frame, text=steps, justify="left").pack(anchor="w", padx=10, pady=6)
 
@@ -114,37 +118,32 @@ class GuiApp(tk.Tk):
 
         self._log("> App started. Please place CSV files into the input folder.")
 
-    # 配置读写
+    # 凭据读写
     def _load_config(self):
-        if not os.path.exists(CONFIG_FILE):
-            return
-        config = configparser.ConfigParser()
         try:
-            config.read(CONFIG_FILE, encoding="utf-8")
-            if config.has_section(CONFIG_SECTION):
-                val = config.get(CONFIG_SECTION, CONFIG_KEY, fallback="")
-                self.api_key_var.set(val)
-                if val:
-                    self._log("Loaded API Key from config.ini.")
-        except Exception as e:
-            self._log(f"Failed to read config: {e}")
+            value = load_api_key() or ""
+            self.api_key_var.set(value)
+            if value:
+                self._log("Loaded API Key from the operating system credential store.")
+        except CredentialStoreError as exc:
+            self._log(f"Could not load API Key: {exc}")
 
     def _save_config(self):
-        config = configparser.ConfigParser()
-        config[CONFIG_SECTION] = {CONFIG_KEY: self.api_key_var.get().strip()}
+        value = self.api_key_var.get().strip()
+        if not value:
+            return False, "API Key cannot be empty."
         try:
-            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-                config.write(f)
+            save_api_key(value)
             return True, None
-        except Exception as e:
-            return False, str(e)
+        except CredentialStoreError as exc:
+            return False, str(exc)
 
     # 事件处理
     def _on_save_api(self):
         ok, err = self._save_config()
         if ok:
-            messagebox.showinfo("Info", "API Key saved to config.ini")
-            self._log("API Key saved.")
+            messagebox.showinfo("Info", "API Key saved in the operating system credential store.")
+            self._log("API Key saved securely.")
         else:
             messagebox.showerror("Error", f"Save failed: {err}")
             self._log(f"Save failed: {err}")
@@ -237,5 +236,11 @@ class GuiApp(tk.Tk):
 
 
 if __name__ == "__main__":
+    if "--check-runtime" in sys.argv:
+        try:
+            verify_credential_store()
+        except CredentialStoreError:
+            raise SystemExit(1)
+        raise SystemExit(0)
     app = GuiApp()
     app.mainloop()

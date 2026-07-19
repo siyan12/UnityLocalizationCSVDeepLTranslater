@@ -15,6 +15,7 @@ dist/
 .codebuddy/
 
 # Local files
+/config.ini
 /CSVtranslator-run/input/*
 !/CSVtranslator-run/input/.gitkeep
 /CSVtranslator-run/output/*

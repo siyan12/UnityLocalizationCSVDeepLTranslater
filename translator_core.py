@@ -63,6 +63,25 @@ TOKEN_SUFFIX = "§§"
 
 Logger = Callable[[str], None]
 
+POSSIBLE_SECRET_PATTERNS = (
+    re.compile(r"(?i)(?<![0-9a-f])[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}:fx(?!\w)"),
+    re.compile(r"(?i)(DeepL-Auth-Key\s+)[^\s,;]+"),
+    re.compile(r"(?i)((?:deepl[_-]?)?api[_-]?key\s*[:=]\s*)[^\s,;]+"),
+)
+
+
+def safe_error_message(error: BaseException, secret: str = "") -> str:
+    """Return an error description with known and key-shaped secrets removed."""
+    message = str(error)
+    if secret:
+        message = message.replace(secret, "[REDACTED]")
+    for pattern in POSSIBLE_SECRET_PATTERNS:
+        message = pattern.sub(
+            lambda match: (match.group(1) if match.lastindex else "") + "[REDACTED]",
+            message,
+        )
+    return message
+
 
 def ensure_directories(input_dir: str, output_dir: str) -> None:
     os.makedirs(input_dir, exist_ok=True)
@@ -161,7 +180,7 @@ def translate_text(
             )
             return result.text if hasattr(result, "text") else str(result)
         except Exception as e:
-            last_error = e
+            last_error = safe_error_message(e)
             time.sleep(base_delay * (2 ** attempt))
     raise RuntimeError(f"Translation failed after {max_retries} retries: {last_error}")
 
@@ -211,10 +230,7 @@ def process_rows(
                 continue
 
             if logger:
-                snippet = (source_text or "").strip()
-                if len(snippet) > 60:
-                    snippet = snippet[:60] + "..."
-                logger(f"Translating row {idx} to {target_lang}: '{snippet}'")
+                logger(f"Translating row {idx} to {target_lang}")
 
             key_cache = (tokenized, target_lang)
             try:
@@ -233,14 +249,11 @@ def process_rows(
                     row[header] = detok
                     stats["translated_cells"] += 1
                     if logger:
-                        out_snippet = detok.strip()
-                        if len(out_snippet) > 60:
-                            out_snippet = out_snippet[:60] + "..."
-                        logger(f"  -> Filled '{header}': '{out_snippet}'")
+                        logger(f"  -> Filled '{header}'")
             except Exception as e:
                 stats["errors"] += 1
                 if logger:
-                    logger(f"  -> FAILED for '{header}': {e}")
+                    logger(f"  -> FAILED for '{header}': {safe_error_message(e)}")
 
         new_rows.append(row)
 
@@ -268,7 +281,7 @@ def test_api_key(api_key: str) -> Tuple[bool, str]:
         name = e.__class__.__name__
         if name in ("AuthorizationError", "AuthorizationException"):
             return False, "API Key invalid or authentication failed."
-        return False, f"Unknown error: {e}"
+        return False, f"Unknown error: {safe_error_message(e, api_key)}"
 
 
 def run_translation_for_folder(
@@ -350,7 +363,7 @@ def run_translation_for_folder(
             summary["skipped_source_invalid"] += stats["skipped_source_invalid"]
             summary["errors"] += stats["errors"]
         except Exception as e:
-            log(f" - Failed to process: {e}")
+            log(f" - Failed to process: {safe_error_message(e, api_key)}")
             summary["errors"] += 1
 
     log("All processing completed.")
