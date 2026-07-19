@@ -18,7 +18,7 @@ python -m pip install ".[dev]"
 提交 PR 前运行：
 
 ```bash
-python -m py_compile translator_core.py gui_app.py app_storage.py
+python -m py_compile translator_core.py gui_app.py app_storage.py app_version.py
 python -m pytest -q
 python scripts/check_secrets.py
 ```

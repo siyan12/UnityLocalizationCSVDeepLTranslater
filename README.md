@@ -92,7 +92,7 @@ python gui_app.py
 
 ```bash
 python -m pytest
-python -m py_compile translator_core.py gui_app.py app_storage.py
+python -m py_compile translator_core.py gui_app.py app_storage.py app_version.py
 ```
 
 使用 PyInstaller 构建当前平台的可执行文件：
@@ -246,7 +246,7 @@ Run the offline tests and syntax checks:
 
 ```bash
 python -m pytest
-python -m py_compile translator_core.py gui_app.py app_storage.py
+python -m py_compile translator_core.py gui_app.py app_storage.py app_version.py
 ```
 
 Build an executable for the current platform with PyInstaller:
