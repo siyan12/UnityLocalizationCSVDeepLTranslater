@@ -171,8 +171,8 @@
 - [x] 建立单一版本来源，并统一窗口标题、Git tag、Release 名称和文件名。
 - [x] 提交并维护 PyInstaller spec 或等价的可复现构建配置。
 - [x] 从源码仓库移除后续 EXE 更新，二进制改为 GitHub Release asset。
-- [ ] 在干净环境或 CI 中构建 Windows 产物（本地 Windows 构建已验证；待推送 tag 后验证干净 CI）。
-- [ ] 每个产物发布 SHA-256 校验文件（工作流已实现；待首次 v1.3.0 Release 验证）。
+- [x] 在干净环境或 CI 中构建 Windows 产物（本地与 GitHub Actions Windows 构建均已验证）。
+- [x] 每个产物发布 SHA-256 校验文件（v1.3.0 Release 的 EXE 下载哈希已与校验文件核对一致）。
 - [x] 构建流程支持在配置证书 secrets 时使用 Authenticode；未配置时明确跳过且不声称已签名。
 - [x] 使用语义化版本和有意义的提交/发布说明。
 - [ ] 发布前运行完整测试，并用真实但非敏感的示例 CSV 做人工往返验证（完整测试、离线示例及打包运行时自检已通过；待实际发布前人工确认）。
