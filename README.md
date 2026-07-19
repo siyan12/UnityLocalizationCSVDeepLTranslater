@@ -68,6 +68,12 @@ Use deepL API to translate CSV table that outputed from Unity Localization.
 -   **隐私**：待翻译的 CSV 文本会发送给 DeepL；程序不会额外上传这些文本，UI 日志也不会显示源文或译文内容。
 -   **费用**：DeepL API 的免费额度有限，请注意使用量，避免产生不必要的费用。
 -   **CSV 格式**：请确保你的 CSV 文件来自 Unity Localization 插件，并包含 `Key` 列和源语言列（例如 `en`）。
+-   **结构保护**：工具会保留 .NET/Python/printf 占位符、Unity Smart String、ICU、富文本标签与换行；如果译文结构不同，该单元格会保留原值并报告失败。当前嵌套 Smart String/ICU 会整段保护，因此表达式内部的分支文案不会翻译。
+
+## 🧪 离线测试
+
+安装开发依赖后运行 `python -m pytest`。测试使用 fake DeepL client，并由自动 fixture
+禁止网络连接，不会调用真实或计费 API。
 
 ## 🔐 贡献时的凭据检查
 
@@ -150,6 +156,13 @@ and `output` CSV folders; the API Key is not stored there.
 -   **Privacy**: CSV text selected for translation is sent to DeepL. The application does not upload it elsewhere, and the UI log does not display source or translated text.
 -   **Costs**: The DeepL API has a limited free tier. Be mindful of your usage to avoid unexpected charges.
 -   **CSV Format**: Ensure your CSV file is from the Unity Localization package and contains a `Key` column and a source language column (e.g., `en`).
+-   **Structure protection**: The tool preserves .NET/Python/printf placeholders, Unity Smart Strings, ICU expressions, rich-text tags, and line breaks. If translated structure differs, the original target cell is kept and the failure is reported. Nested Smart String/ICU expressions are currently protected as a whole, so branch text inside them is not translated.
+
+## 🧪 Offline Tests
+
+Install the development dependencies and run `python -m pytest`. Tests use a fake
+DeepL client, and an automatic fixture blocks network connections, so no real or
+billable API is called.
 
 ## 🔐 Credential Checks for Contributors
 

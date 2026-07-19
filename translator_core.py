@@ -20,7 +20,8 @@ import os
 import re
 import csv
 import time
-from typing import Dict, List, Tuple, Any, Match, Optional, Sequence, Callable
+from collections import Counter
+from typing import Dict, List, Tuple, Any, Optional, Sequence, Callable
 
 try:
     import deepl  # pip install deepl
@@ -52,14 +53,16 @@ URL_RE = re.compile(r"^(https?://|www\.)", re.IGNORECASE)
 ONLY_PUNCT_OR_SPACE_RE = re.compile(r"^[\W_]+$", re.UNICODE)
 ONLY_DIGITS_RE = re.compile(r"^\d+(\.\d+)?$")
 
-PLACEHOLDER_PATTERNS = [
-    re.compile(r"\{[^}]*\}"),  # {0}, {name}
-    re.compile(r"%[sdif]"),    # %s, %d, %i, %f
-    re.compile(r"\$\d+"),      # $1, $2
-]
-
-TOKEN_PREFIX = "§§PH_"
-TOKEN_SUFFIX = "§§"
+PRINTF_RE = re.compile(
+    r"%(?:\([^)]+\)|\d+\$)?[-+#0 ']*(?:\d+|\*)?(?:\.(?:\d+|\*))?"
+    r"(?:hh|h|ll|l|L|z|j|t)?[diuoxXfFeEgGaAcrspn%]"
+)
+DOLLAR_PLACEHOLDER_RE = re.compile(r"\$\d+")
+ESCAPED_LINEBREAK_RE = re.compile(r"\\(?:r\\n|n|r)")
+TAG_NAME_RE = re.compile(r"[A-Za-z][A-Za-z0-9:_-]*")
+VOID_TAG_NAMES = {"br", "sprite", "space", "quad", "page", "img", "hr"}
+TOKEN_PREFIX_TEMPLATE = "__UL10N{generation}_PH_"
+TOKEN_SUFFIX = "__"
 
 Logger = Callable[[str], None]
 
@@ -81,6 +84,178 @@ def safe_error_message(error: BaseException, secret: str = "") -> str:
             message,
         )
     return message
+
+
+class StructureValidationError(ValueError):
+    """Protected localization structure is malformed or changed."""
+
+
+StructuralPart = Tuple[int, int, str, str]
+
+
+def _find_braced_end(text: str, start: int) -> Optional[int]:
+    depth = 0
+    for index in range(start, len(text)):
+        char = text[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    return None
+
+
+def _find_tag_end(text: str, start: int) -> Optional[int]:
+    index = start + 1
+    quote = ""
+    while index < len(text):
+        char = text[index]
+        if quote:
+            if char == quote:
+                quote = ""
+        elif char in ('"', "'"):
+            quote = char
+        elif char == ">":
+            return index + 1
+        index += 1
+    return None
+
+
+def _tag_event(raw: str) -> Optional[Tuple[str, str]]:
+    inner = raw[1:-1].strip()
+    if not inner or inner.startswith(("!", "?")):
+        return None
+    if re.fullmatch(r"#[0-9A-Fa-f]{3,8}", inner):
+        return "open", "color"
+    closing = inner.startswith("/")
+    if closing:
+        inner = inner[1:].lstrip()
+    match = TAG_NAME_RE.match(inner)
+    if not match:
+        return None
+    name = match.group(0).lower()
+    if closing:
+        return "close", name
+    if inner.rstrip().endswith("/") or name in VOID_TAG_NAMES:
+        return "void", name
+    return "open", name
+
+
+def _scan_structural_parts(text: str) -> List[StructuralPart]:
+    """Scan protected structures once, preserving nested brace expressions."""
+    parts: List[StructuralPart] = []
+    index = 0
+    while index < len(text):
+        start = index
+        if text.startswith("\r\n", index):
+            parts.append((start, start + 2, "linebreak", "\r\n"))
+            index += 2
+            continue
+        if text[index] in "\r\n":
+            parts.append((start, start + 1, "linebreak", text[index]))
+            index += 1
+            continue
+        escaped_linebreak = ESCAPED_LINEBREAK_RE.match(text, index)
+        if escaped_linebreak:
+            index = escaped_linebreak.end()
+            parts.append((start, index, "linebreak", escaped_linebreak.group(0)))
+            continue
+        if text.startswith("{{", index):
+            escaped_end = text.find("}}", index + 2)
+            end = escaped_end + 2 if escaped_end >= 0 else start + 2
+            parts.append((start, end, "brace", text[start:end]))
+            index = end
+            continue
+        if text.startswith("}}", index):
+            parts.append((start, start + 2, "brace", "}}"))
+            index += 2
+            continue
+        if text[index] == "{":
+            end = _find_braced_end(text, index)
+            if end is None:
+                raise StructureValidationError("Unbalanced opening brace in source text.")
+            parts.append((start, end, "brace", text[start:end]))
+            index = end
+            continue
+        if text[index] == "}":
+            raise StructureValidationError("Unbalanced closing brace in source text.")
+        if text[index] == "<":
+            end = _find_tag_end(text, index)
+            if end is not None:
+                raw = text[start:end]
+                if _tag_event(raw) is not None:
+                    parts.append((start, end, "tag", raw))
+                    index = end
+                    continue
+        printf_match = PRINTF_RE.match(text, index)
+        if (
+            printf_match
+            and printf_match.group(0).startswith("% ")
+            and printf_match.end() < len(text)
+            and text[printf_match.end()].isalpha()
+        ):
+            printf_match = None
+        if printf_match:
+            index = printf_match.end()
+            parts.append((start, index, "placeholder", printf_match.group(0)))
+            continue
+        dollar_match = DOLLAR_PLACEHOLDER_RE.match(text, index)
+        if dollar_match:
+            index = dollar_match.end()
+            parts.append((start, index, "placeholder", dollar_match.group(0)))
+            continue
+        index += 1
+    return parts
+
+
+def _validate_tag_nesting(parts: Sequence[StructuralPart]) -> None:
+    stack: List[str] = []
+    for _, _, kind, raw in parts:
+        if kind != "tag":
+            continue
+        event = _tag_event(raw)
+        if event is None:
+            continue
+        event_type, name = event
+        if event_type == "open":
+            stack.append(name)
+        elif event_type == "close":
+            if not stack or stack[-1] != name:
+                raise StructureValidationError(
+                    f"Invalid rich-text tag nesting near </{name}>."
+                )
+            stack.pop()
+    if stack:
+        raise StructureValidationError(
+            f"Unclosed rich-text tag <{stack[-1]}> in source text."
+        )
+
+
+def _structure_signature(
+    text: str,
+) -> Tuple[Counter[Tuple[str, Tuple[str, ...]]], Tuple[str, ...], Tuple[Tuple[str, Tuple[str, ...]], ...]]:
+    parts = _scan_structural_parts(text)
+    _validate_tag_nesting(parts)
+    placeholders: Counter[Tuple[str, Tuple[str, ...]]] = Counter()
+    tags: List[str] = []
+    linebreaks: List[Tuple[str, Tuple[str, ...]]] = []
+    tag_stack: List[str] = []
+    for _, _, kind, raw in parts:
+        if kind == "tag":
+            tags.append(raw)
+            event = _tag_event(raw)
+            if event:
+                event_type, name = event
+                if event_type == "open":
+                    tag_stack.append(name)
+                elif event_type == "close":
+                    tag_stack.pop()
+        elif kind == "linebreak":
+            linebreaks.append((raw, tuple(tag_stack)))
+        else:
+            placeholders[(raw, tuple(tag_stack))] += 1
+    return placeholders, tuple(tags), tuple(linebreaks)
 
 
 def ensure_directories(input_dir: str, output_dir: str) -> None:
@@ -136,28 +311,61 @@ def is_skippable_source(text: str) -> bool:
 
 
 def tokenize_placeholders(text: str) -> Tuple[str, Dict[str, str]]:
+    parts = _scan_structural_parts(text)
+    _validate_tag_nesting(parts)
     mapping: Dict[str, str] = {}
-    token_index = 0
+    generation = 0
+    prefix = TOKEN_PREFIX_TEMPLATE.format(generation=generation)
+    while prefix in text:
+        generation += 1
+        prefix = TOKEN_PREFIX_TEMPLATE.format(generation=generation)
 
-    def repl(match: Match[str]) -> str:
-        nonlocal token_index
-        original = match.group(0)
-        token = f"{TOKEN_PREFIX}{token_index}{TOKEN_SUFFIX}"
-        mapping[token] = original
-        token_index += 1
-        return token
+    chunks: List[str] = []
+    cursor = 0
+    for token_index, (start, end, _, raw) in enumerate(parts):
+        chunks.append(text[cursor:start])
+        token = f"{prefix}{token_index:04d}{TOKEN_SUFFIX}"
+        mapping[token] = raw
+        chunks.append(token)
+        cursor = end
+    chunks.append(text[cursor:])
+    return "".join(chunks), mapping
 
-    tokenized = text
-    for pattern in PLACEHOLDER_PATTERNS:
-        tokenized = pattern.sub(repl, tokenized)
-    return tokenized, mapping
+
+def _validate_translation_tokens(text: str, mapping: Dict[str, str]) -> None:
+    if not mapping:
+        return
+    first_token = next(iter(mapping))
+    prefix = first_token.rsplit("_PH_", 1)[0] + "_PH_"
+    token_re = re.compile(re.escape(prefix) + r"\d{4}" + re.escape(TOKEN_SUFFIX))
+    actual = Counter(token_re.findall(text))
+    expected = Counter(mapping.keys())
+    if actual != expected:
+        raise StructureValidationError(
+            "Translation changed protected placeholder, tag, or line-break tokens."
+        )
 
 
 def detokenize_placeholders(text: str, mapping: Dict[str, str]) -> str:
-    out = text
-    for token, original in mapping.items():
-        out = out.replace(token, original)
-    return out
+    _validate_translation_tokens(text, mapping)
+    if not mapping:
+        return text
+    token_re = re.compile("|".join(re.escape(token) for token in mapping))
+    return token_re.sub(lambda match: mapping[match.group(0)], text)
+
+
+def validate_translated_structure(source: str, translated: str) -> None:
+    """Reject translated text whose protected structure differs from the source."""
+    source_placeholders, source_tags, source_linebreaks = _structure_signature(source)
+    translated_placeholders, translated_tags, translated_linebreaks = _structure_signature(translated)
+    if translated_placeholders != source_placeholders:
+        raise StructureValidationError(
+            "Translation changed placeholder or brace structure."
+        )
+    if translated_tags != source_tags:
+        raise StructureValidationError("Translation changed rich-text tag structure.")
+    if translated_linebreaks != source_linebreaks:
+        raise StructureValidationError("Translation changed line-break structure.")
 
 
 def translate_text(
@@ -221,7 +429,21 @@ def process_rows(
             new_rows.append(row)
             continue
 
-        tokenized, mapping = tokenize_placeholders(source_text)
+        try:
+            tokenized, mapping = tokenize_placeholders(source_text)
+        except StructureValidationError as error:
+            for header in targets_map:
+                if should_fill_cell(row.get(header, ""), preserve_existing):
+                    stats["errors"] += 1
+                    if logger:
+                        logger(
+                            f"  -> FAILED for '{header}': "
+                            f"invalid source structure ({safe_error_message(error)})"
+                        )
+                else:
+                    stats["skipped_existing"] += 1
+            new_rows.append(row)
+            continue
 
         for header, target_lang in targets_map.items():
             current_value = row.get(header, "")
@@ -234,22 +456,26 @@ def process_rows(
 
             key_cache = (tokenized, target_lang)
             try:
+                from_cache = key_cache in cache
                 if key_cache in cache:
                     translated = cache[key_cache]
                     if logger:
                         logger("  -> Cache hit")
                 else:
                     translated = translate_text(translator, tokenized, target_lang)
-                    cache[key_cache] = translated
                     if logger:
                         logger("  -> API call success")
 
                 detok = detokenize_placeholders(translated, mapping)
-                if str(detok).strip() != "":
-                    row[header] = detok
-                    stats["translated_cells"] += 1
-                    if logger:
-                        logger(f"  -> Filled '{header}'")
+                if str(detok).strip() == "":
+                    raise StructureValidationError("Translation returned empty text.")
+                validate_translated_structure(source_text, detok)
+                if not from_cache:
+                    cache[key_cache] = translated
+                row[header] = detok
+                stats["translated_cells"] += 1
+                if logger:
+                    logger(f"  -> Filled '{header}'")
             except Exception as e:
                 stats["errors"] += 1
                 if logger:
