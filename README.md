@@ -25,6 +25,7 @@ Use deepL API to translate CSV table that outputed from Unity Localization.
 
 -   **已测试的 Unity 兼容性**：CSV 层面的自动测试覆盖 Unity Localization 1.4 文档中的标准 CSV 与 CSV (With Comments) 结构；限制见下文“Unity 兼容范围”。
 -   **图形化界面**：简洁直观的图形界面，无需命令行操作。
+-   **界面语言**：当前 GUI 仅提供英文界面；README 同时提供中文和英文说明。
 -   **批量翻译**：固定从 `English(en)` 源列翻译，自动填充 CSV 中检测到的受支持目标列；当前没有源语言或目标语言选择器。DeepL 请求按保守的最多 50 条文本和安全请求体预算分批发送。
 -   **任务内缓存**：同一次任务会跨文件复用相同源文本与目标语言的译文；缓存仅保存在内存中，任务结束即清除，不会把本地化内容持久化到磁盘。
 -   **安全配置**：DeepL API Key 保存到操作系统凭据库，不写入项目或 `config.ini`。
@@ -73,7 +74,7 @@ Use deepL API to translate CSV table that outputed from Unity Localization.
 py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -r requirements-dev.txt
+python -m pip install ".[dev]"
 python gui_app.py
 ```
 
@@ -82,7 +83,7 @@ python gui_app.py
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -r requirements-dev.txt
+python -m pip install ".[dev]"
 python gui_app.py
 ```
 
@@ -167,6 +168,7 @@ There might be some undiscovered bugs or oversights. I would be very grateful if
 
 -   **Tested Unity Compatibility**: CSV-level automated tests cover the standard CSV and CSV (With Comments) layouts documented for Unity Localization 1.4; see **Unity compatibility scope** below for limitations.
 -   **GUI**: Simple and intuitive graphical user interface, no command line needed.
+-   **UI Language**: The current GUI is English-only; this README provides both Chinese and English instructions.
 -   **Batch Translation**: Always translate from the `English(en)` source column and automatically fill supported target columns detected in the CSV; there is currently no source- or target-language selector. DeepL requests are split conservatively by both a maximum of 50 texts and a safe request-body budget.
 -   **Task-local Cache**: Reuse translations for the same source-text/target-language pair across files in one task. The cache is memory-only, cleared when the task ends, and never persists localization content to disk.
 -   **Secure Configuration**: The DeepL API Key is stored in the operating system credential store, never in the project or `config.ini`.
@@ -217,7 +219,7 @@ Tkinter, install it first with the system package manager (for example,
 py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -r requirements-dev.txt
+python -m pip install ".[dev]"
 python gui_app.py
 ```
 
@@ -226,7 +228,7 @@ python gui_app.py
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -r requirements-dev.txt
+python -m pip install ".[dev]"
 python gui_app.py
 ```
 

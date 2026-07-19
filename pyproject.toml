@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "unity-localization-csv-deepl-translater"
+version = "1.1.0"
+description = "Translate Unity Localization CSV files with the DeepL API."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "deepl>=1.22,<2",
+    "keyring>=25,<26",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Localization",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+]
+
+[project.urls]
+Homepage = "https://github.com/siyan12/UnityLocalizationCSVDeepLTranslater"
+Repository = "https://github.com/siyan12/UnityLocalizationCSVDeepLTranslater"
+Issues = "https://github.com/siyan12/UnityLocalizationCSVDeepLTranslater/issues"
+
+[tool.setuptools]
+py-modules = ["app_storage", "gui_app", "translator_core"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

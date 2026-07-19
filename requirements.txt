@@ -1,2 +1,1 @@
-deepl
-keyring>=25,<26
+.
