@@ -108,11 +108,11 @@
 
 #### 2.2 添加 GitHub Actions
 
-- [ ] 在 Windows 和 Linux 上运行语法检查与测试。
-- [ ] 覆盖项目声明支持的 Python 版本。
-- [ ] 加入依赖缓存，但不缓存用户数据或密钥。
-- [ ] 在 PR 和 `main` push 时运行。
-- [ ] 可选：增加静态检查、格式检查和 secret scanning。
+- [x] 在 Windows 和 Linux 上运行语法检查与测试。
+- [x] 覆盖项目声明支持的 Python 版本。
+- [x] 加入依赖缓存，但不缓存用户数据或密钥。
+- [x] 在 PR 和 `main` push 时运行。
+- [x] 可选：增加静态检查、格式检查和 secret scanning（已启用凭据扫描）。
 
 验收标准：PR 必须在零真实 API 调用的情况下通过全部检查。
 
