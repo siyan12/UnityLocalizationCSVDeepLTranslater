@@ -54,7 +54,7 @@ jobs:
         run: python -m PyInstaller --clean --noconfirm CSVTranslator.spec
 
       - name: Upload unsigned build for the isolated release job
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: unsigned-windows-executable
           path: dist/CSVTranslator-${{ steps.version.outputs.version }}.exe
@@ -68,7 +68,7 @@ jobs:
       contents: write
     steps:
       - name: Download the isolated build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: unsigned-windows-executable
           path: release-assets
@@ -129,6 +129,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           gh release create $env:GITHUB_REF_NAME `
             "release-assets/${{ steps.asset.outputs.name }}" `
